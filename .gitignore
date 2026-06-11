@@ -1,0 +1,21 @@
+# Secrets — never commit
+llm_config.json
+
+# Runtime state
+platform/data/*.db
+platform/data/*.db-wal
+platform/data/*.db-shm
+platform/data/road_geometry.json
+server_boot.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db

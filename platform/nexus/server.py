@@ -1,0 +1,635 @@
+"""
+Nexus City OS — HTTP API + Operator UI server.
+
+Standard-library HTTP server exposing the platform API and serving the
+operator Live Grid UI. Zero external dependencies — runs anywhere.
+
+Production hardening in this layer:
+  * AUTH — every /api route (except /api/login) requires a signed bearer
+    session token (see ``nexus.auth``). The acting principal is taken from
+    the verified token, NEVER from the request body — clients cannot
+    impersonate another user. Login failures and logouts are audit-logged.
+  * PERSISTENCE — the runtime opens the durable Store; the audit chain,
+    operating mode, users, incidents, and plans survive restarts.
+  * REAL-TIME PUSH — /api/events is a Server-Sent-Events stream driven by
+    the engine's event hub: state changes push to the TOC immediately
+    instead of waiting on a polling interval.
+
+Endpoints (JSON):
+  POST /api/login                — {user_id, password} → {token, role}
+  POST /api/logout               — revoke the current session
+  GET  /api/status               — full platform status snapshot
+  GET  /api/grid                 — city graph snapshot (map data)
+  GET  /api/events               — SSE stream (state-change push)
+  GET  /api/camera?id=&refresh=  — live camera frame proxy
+  GET  /api/audit                — recent audit entries + chain verification
+  GET  /api/cascade?id=INT-xxxx  — cascading dependency analysis
+  POST /api/tick                 — advance the simulation one cycle
+  POST /api/scenario             — inject an incident scenario
+  POST /api/incident/ack         — {incident_id}
+  POST /api/incident/resolve     — {incident_id, resolution, notes}
+  POST /api/recommend            — {incident_id}
+  POST /api/plan/approve         — {plan_id}
+  POST /api/plan/reject          — {plan_id, reason}
+  POST /api/plan/rollback        — {plan_id}
+  GET  /api/plan/instruction?id= — Advisory Mode formatted instruction
+  POST /api/mode                 — {mode}
+  POST /api/copilot/query        — {text}
+
+A background thread ticks the edge simulator + transit/weather polling so
+the Live Grid is alive without manual /api/tick calls.
+"""
+from __future__ import annotations
+
+import json
+import threading
+import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlparse
+
+from . import bootstrap
+from .adapters import CityAdapter, SeattleLiveAdapter, TacomaAdapter
+from .analytics import Analytics
+from .auth import AuthError, Authenticator
+from .congestion import CongestionEstimator
+from .roadgeom import RoadGeometry
+from .copilot import InjectionBlocked, RateLimitExceeded
+from .engine import NexusEngine, PermissionDenied
+from .models import IncidentType, OperatingMode, now_ts
+from .store import Store
+from .vision import VisionSweep
+
+UI_PATH = Path(__file__).resolve().parent.parent / "ui" / "index.html"
+TICK_INTERVAL_S = 3.0
+DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "data" / "nexus.db")
+
+# Routes that do not require a session token.
+PUBLIC_ROUTES = {"/", "/index.html", "/api/login"}
+
+# Multi-city adapter registry (Phase 4 — City Adapter SDK).
+CITY_ADAPTERS = {
+    "seattle": (SeattleLiveAdapter, "Seattle, WA"),
+    "tacoma": (TacomaAdapter, "Tacoma, WA"),
+}
+
+
+class PlatformRuntime:
+    """Holds the engine + background data-polling loop.
+
+    By default uses the REAL-DATA ``SeattleLiveAdapter`` (live SDOT/WSDOT
+    cameras, real King County Metro positions, real NWS weather) and the
+    durable SQLite store. Pass ``live=False`` for the fully offline
+    deterministic adapter; ``db_path=":memory:"`` for ephemeral state.
+    """
+
+    def __init__(self, adapter: Optional[CityAdapter] = None,
+                 live: bool = True,
+                 db_path: str = DEFAULT_DB,
+                 use_llm: bool = True,
+                 enable_vision: bool = True,
+                 city: str = "seattle") -> None:
+        if adapter is None and live:
+            adapter_cls = CITY_ADAPTERS.get(
+                city, CITY_ADAPTERS["seattle"])[0]
+            adapter = adapter_cls()
+        self.store = Store(db_path)
+        self.auth = Authenticator(self.store)
+        self.engine, self.edge, self.adapter = bootstrap(
+            adapter, self.store, use_llm=use_llm)
+        # Ground the copilot chat in the live 911 feed (Citizen-style).
+        live = getattr(self.adapter, "live", None)
+        if live is not None:
+            def _emergency_context() -> str:
+                rows = live.emergencies(max_age_s=3600.0)[:12]
+                if not rows:
+                    return "911 (SFD live): no dispatches in the last hour\n"
+                lines = "; ".join(
+                    f"{r['type']} at {r['address']}" for r in rows[:8])
+                return (f"911 (SFD live, last hour, {len(rows)} "
+                        f"dispatches): {lines}\n")
+            self.engine.copilot.extra_context_fn = _emergency_context
+        # Resolve real road paths for traffic-flow rendering (OSRM, cached
+        # on disk; straight-line fallback until each path resolves).
+        geom_cache = Path(db_path).parent / "road_geometry.json" \
+            if db_path != ":memory:" else \
+            Path(__file__).resolve().parent.parent / "data" / "road_geometry.json"
+        self.roadgeom = RoadGeometry(geom_cache)
+        graph = self.engine.graph
+        jobs = []
+        for seg in graph.segments.values():
+            a = graph.intersections.get(seg.from_intersection)
+            b = graph.intersections.get(seg.to_intersection)
+            if a and b:
+                jobs.append((seg.id, a.lat, a.lon, b.lat, b.lon))
+        self.roadgeom.start_fill(jobs)
+        # Real congestion estimation from live bus GPS (+ optional WSDOT
+        # flow when WSDOT_ACCESS_CODE is set) — Phase 1.
+        self.congestion = CongestionEstimator(self.engine.graph)
+        self._last_flow_at = 0.0
+        # AI vision sweep over live camera frames — Phase 2. Constructed
+        # always (so /api/vision/status works); STARTED only when enabled,
+        # the topology is live, and the LLM client is available.
+        self.vision = VisionSweep(self.engine, self.adapter)
+        self.analytics = Analytics(self.store)
+        self.vision_enabled = bool(
+            enable_vision
+            and getattr(self.adapter, "using_live_topology", False)
+            and self.engine.copilot.use_llm
+            and self.engine.copilot.llm is not None)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start_background(self) -> None:
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        if self.vision_enabled:
+            self.vision.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.vision.stop()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.tick()
+            except Exception:   # noqa: BLE001 — keep the loop alive
+                traceback.print_exc()
+            self._stop.wait(TICK_INTERVAL_S)
+
+    def tick(self) -> Dict[str, Any]:
+        """One platform cycle: edge capture, transit/weather poll, rollback
+        monitoring."""
+        engine = self.engine
+        emitted = self.edge.tick()
+        for vehicle in self.adapter.poll_transit():
+            try:
+                engine.graph.update_vehicle(
+                    vehicle.id, vehicle.lat, vehicle.lon,
+                    vehicle.speed_mph, vehicle.last_update)
+            except KeyError:
+                engine.graph.add_vehicle(vehicle)
+        # Prune vehicles that have left the area (no update in > 2 min).
+        cutoff = now_ts() - 120.0
+        stale_ids = [vid for vid, v in engine.graph.vehicles.items()
+                     if v.last_update < cutoff]
+        for vid in stale_ids:
+            engine.graph.vehicles.pop(vid, None)
+        engine.touch_feed("transit_gps")
+        # REAL congestion: every moving bus is a speed probe. Optional
+        # WSDOT flow data joins as high-weight samples every 60 s.
+        live = getattr(self.adapter, "live", None)
+        if getattr(self.adapter, "using_live_topology", False):
+            self.congestion.ingest_vehicles(
+                list(engine.graph.vehicles.values()))
+            if live is not None and now_ts() - self._last_flow_at >= 60.0:
+                self._last_flow_at = now_ts()
+                try:
+                    self.congestion.ingest_flow(live.flow_speeds())
+                except Exception:  # noqa: BLE001 — degrade, never crash
+                    pass
+            self.congestion.compute()
+            self.congestion.apply(engine.graph)
+        engine.real_congestion_ids = self.congestion.fresh_ids()
+        engine.record_history()
+        engine.graph.set_weather(self.adapter.poll_weather())
+        engine.touch_feed("weather")
+        engine.touch_feed("closures")
+        proposals = engine.check_rollback_monitors()
+        engine.emit_event("tick")   # push grid refresh to SSE clients
+        return {"telemetry_emitted": len(emitted),
+                "revert_proposals": proposals,
+                "real_congestion_intersections":
+                    len(engine.real_congestion_ids)}
+
+
+def make_handler(runtime: PlatformRuntime):
+    engine: NexusEngine = runtime.engine
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "NexusCityOS/1.1"
+
+        def handle(self) -> None:
+            """Wrap the stdlib request loop to silence client-disconnect
+            noise (normal for SSE streams when a console tab closes)."""
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionAbortedError,
+                    ConnectionResetError):
+                pass
+
+        # ---- helpers ---------------------------------------------------
+
+        def _send_json(self, payload: Any, code: int = 200) -> None:
+            body = json.dumps(payload, default=str).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_html(self, html: str, code: int = 200) -> None:
+            body = html.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _body(self) -> Dict[str, Any]:
+            length = int(self.headers.get("Content-Length", 0))
+            if length == 0:
+                return {}
+            raw = self.rfile.read(length)
+            try:
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else {}
+            except json.JSONDecodeError:
+                return {}
+
+        def _principal(self, parsed) -> Dict[str, Any]:
+            """Verify the session token (Authorization header or ?token=)
+            and return its payload. Raises AuthError if absent/invalid."""
+            auth_header = self.headers.get("Authorization", "")
+            token = ""
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+            if not token:
+                token = parse_qs(parsed.query).get("token", [""])[0]
+            if not token:
+                raise AuthError("Authentication required.")
+            return runtime.auth.verify_token(token)
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            pass  # quiet by default
+
+        # ---- GET -------------------------------------------------------
+
+        def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
+            parsed = urlparse(self.path)
+            route = parsed.path
+            try:
+                if route in ("/", "/index.html"):
+                    self._send_html(UI_PATH.read_text(encoding="utf-8"))
+                    return
+                # All other GET API routes require a valid session.
+                principal = self._principal(parsed)
+                if route == "/api/status":
+                    self._send_json(engine.status())
+                elif route == "/api/events":
+                    self._sse_stream()
+                elif route == "/api/grid":
+                    snapshot = engine.graph.snapshot()
+                    # Attach real road geometry where resolved (else the UI
+                    # draws a straight line as fallback).
+                    for seg in snapshot["segments"]:
+                        p = runtime.roadgeom.path(seg["id"])
+                        if p:
+                            seg["path"] = p
+                    snapshot["road_geometry"] = runtime.roadgeom.stats()
+                    cam_map = getattr(runtime.adapter, "live_camera_map", {})
+                    if cam_map:
+                        for cam in snapshot["cameras"]:
+                            meta = cam_map.get(cam["id"])
+                            if meta:
+                                cam["live"] = True
+                                cam["live_name"] = meta["name"]
+                                cam["live_type"] = meta["type"]
+                    snapshot["live_data"] = bool(getattr(
+                        runtime.adapter, "using_live_topology", False))
+                    real_n = len(engine.real_congestion_ids)
+                    if real_n > 0:
+                        src = f"live (bus GPS×{real_n}"
+                        if runtime.congestion.flow_active:
+                            src += " + WSDOT flow"
+                        src += ")"
+                    else:
+                        src = "simulated"
+                    snapshot["congestion_source"] = src
+                    snapshot["city"] = runtime.adapter.city_id
+                    self._send_json(snapshot)
+                elif route == "/api/camera":
+                    params = parse_qs(parsed.query)
+                    cam_id = params.get("id", [""])[0]
+                    force = params.get("refresh", ["0"])[0] == "1"
+                    cam_map = getattr(runtime.adapter, "live_camera_map", {})
+                    meta = cam_map.get(cam_id)
+                    live = getattr(runtime.adapter, "live", None)
+                    if meta is None or live is None:
+                        self._send_json(
+                            {"error": "no live feed for this camera"}, 404)
+                        return
+                    result = live.camera_image(meta["live_id"],
+                                               force_refresh=force)
+                    if result is None:
+                        self._send_json(
+                            {"error": "camera image unavailable"}, 503)
+                        return
+                    payload, content_type, fetched_at = result
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Captured-At", f"{fetched_at:.3f}")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                elif route == "/api/cities":
+                    self._send_json({
+                        "current": runtime.adapter.city_id,
+                        "available": [
+                            {"id": cid, "name": name,
+                             "launch": f"python platform/run.py "
+                                       f"--city {cid}"}
+                            for cid, (_cls, name) in CITY_ADAPTERS.items()],
+                    })
+                elif route == "/api/analytics":
+                    params = parse_qs(parsed.query)
+                    hours = float(params.get("hours", ["24"])[0])
+
+                    def _name(iid: str) -> str:
+                        inter = engine.graph.intersections.get(iid)
+                        return inter.name if inter else iid
+                    self._send_json(runtime.analytics.summary(
+                        hours=hours, name_lookup=_name))
+                elif route == "/api/vision/status":
+                    stats = runtime.vision.stats()
+                    stats["enabled"] = runtime.vision_enabled
+                    self._send_json(stats)
+                elif route == "/api/livehealth":
+                    live = getattr(runtime.adapter, "live", None)
+                    self._send_json(live.health() if live else
+                                    {"live_data": False})
+                elif route == "/api/emergencies":
+                    # Citizen-style live emergency layer: SFD Real-Time 911
+                    # dispatches + NWS hazard alerts.
+                    live = getattr(runtime.adapter, "live", None)
+                    if live is None:
+                        self._send_json({"available": False,
+                                         "emergencies": [], "hazards": []})
+                        return
+                    params = parse_qs(parsed.query)
+                    age = float(params.get("age", ["3600"])[0])
+                    rows = live.emergencies(max_age_s=age)
+                    self._send_json({
+                        "available": True,
+                        "emergencies": rows,
+                        "hazards": live.hazard_alerts(),
+                        "source": "Seattle Fire Dept Real-Time 911 "
+                                  "(data.seattle.gov) + NWS alerts",
+                    })
+                elif route == "/api/audit":
+                    self._send_json({
+                        "entries": engine.audit.entries(limit=100),
+                        "chain_intact": engine.audit.verify_chain(),
+                        "total": len(engine.audit),
+                    })
+                elif route == "/api/cascade":
+                    params = parse_qs(parsed.query)
+                    iid = params.get("id", [""])[0]
+                    self._send_json({
+                        "blocked": iid,
+                        "impacts": engine.graph.cascading_impact(iid),
+                    })
+                elif route == "/api/plan/instruction":
+                    params = parse_qs(parsed.query)
+                    pid = params.get("id", [""])[0]
+                    self._send_json(engine.advisory_instruction(pid))
+                elif route == "/api/whoami":
+                    self._send_json({"user_id": principal["sub"],
+                                     "role": principal["role"],
+                                     "expires_at": principal["exp"]})
+                else:
+                    self._send_json({"error": "not found"}, 404)
+            except AuthError as exc:
+                self._send_json({"error": str(exc)}, 401)
+            except KeyError as exc:
+                self._send_json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+            except (BrokenPipeError, ConnectionAbortedError,
+                    ConnectionResetError):
+                pass   # client disconnected (e.g. SSE stream closed)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                self._send_json({"error": f"internal: {exc}"}, 500)
+
+        def _sse_stream(self) -> None:
+            """Server-Sent-Events: pushes a 'changed' event whenever the
+            engine state advances. The client refreshes on each event."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            last_seq = engine.event_seq
+            # Initial hello so the client knows the stream is live.
+            self.wfile.write(b"event: hello\ndata: 0\n\n")
+            self.wfile.flush()
+            while True:
+                seq = engine.wait_for_event(last_seq, timeout=20.0)
+                if seq == last_seq:
+                    self.wfile.write(b": keepalive\n\n")   # comment frame
+                else:
+                    last_seq = seq
+                    self.wfile.write(
+                        f"data: {seq}\n\n".encode("ascii"))
+                self.wfile.flush()
+
+        # ---- POST ------------------------------------------------------
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            route = parsed.path
+            body = self._body()
+            try:
+                if route == "/api/login":
+                    user_id = str(body.get("user_id", ""))
+                    try:
+                        session = runtime.auth.login(
+                            user_id, str(body.get("password", "")))
+                    except AuthError as exc:
+                        engine.audit.record(
+                            actor=user_id or "unknown",
+                            action="login_failed", outcome="denied",
+                            detail=str(exc))
+                        raise
+                    engine.audit.record(actor=user_id, action="login",
+                                        detail=f"role={session['role']}")
+                    self._send_json(session)
+                    return
+
+                # Everything else requires a verified session; the acting
+                # user is the token subject — never the request body.
+                principal = self._principal(parsed)
+                user_id = principal["sub"]
+
+                if route == "/api/logout":
+                    auth_header = self.headers.get("Authorization", "")
+                    if auth_header.startswith("Bearer "):
+                        runtime.auth.revoke_token(auth_header[7:].strip())
+                    engine.audit.record(actor=user_id, action="logout")
+                    self._send_json({"ok": True})
+                elif route == "/api/tick":
+                    self._send_json(runtime.tick())
+                elif route == "/api/scenario":
+                    iid = str(body.get("intersection_id", ""))
+                    anomaly = IncidentType(str(body.get(
+                        "anomaly", "collision")))
+                    if not engine.graph.has_intersection(iid):
+                        raise KeyError(f"Unknown intersection {iid}")
+                    runtime.edge.inject_scenario(iid, anomaly)
+                    result = runtime.tick()
+                    self._send_json({"injected": iid,
+                                     "anomaly": anomaly.value,
+                                     **result})
+                elif route == "/api/incident/ack":
+                    inc = engine.acknowledge_incident(
+                        user_id, str(body.get("incident_id", "")))
+                    self._send_json({"incident_id": inc.id,
+                                     "state": inc.state.value})
+                elif route == "/api/incident/resolve":
+                    inc = engine.resolve_incident(
+                        user_id,
+                        str(body.get("incident_id", "")),
+                        str(body.get("resolution", "Resolved")),
+                        str(body.get("notes", "")))
+                    self._send_json({"incident_id": inc.id,
+                                     "state": inc.state.value})
+                elif route == "/api/recommend":
+                    plan = engine.recommend(str(body.get("incident_id", "")))
+                    result = plan.to_dict()
+                    result["generator"] = engine.copilot.last_generator
+                    self._send_json(result)
+                elif route == "/api/incident/analyze":
+                    # AI VISION: triage the live camera frame at an
+                    # intersection (Claude Haiku 4.5 multimodal).
+                    iid = str(body.get("intersection_id", ""))
+                    if not engine.graph.has_intersection(iid):
+                        raise KeyError(f"Unknown intersection {iid}")
+                    inter = engine.graph.get_intersection(iid)
+                    cam_map = getattr(runtime.adapter, "live_camera_map", {})
+                    live = getattr(runtime.adapter, "live", None)
+                    cam_meta = next(
+                        (m for m in cam_map.values()
+                         if m["intersection_id"] == iid), None)
+                    if cam_meta is None or live is None:
+                        self._send_json(
+                            {"error": "no live camera at this intersection"},
+                            404)
+                        return
+                    frame = live.camera_image(cam_meta["live_id"],
+                                              force_refresh=True)
+                    if frame is None:
+                        self._send_json(
+                            {"error": "camera frame unavailable"}, 503)
+                        return
+                    analysis = engine.copilot.analyze_frame(
+                        frame[0],
+                        f"Camera at {inter.name}, Seattle. Platform "
+                        f"congestion index {inter.congestion:.0%}.")
+                    engine.audit.record(
+                        actor=user_id, action="vision_analysis",
+                        targets=[iid],
+                        detail=str(analysis.get("assessment", ""))[:200],
+                        outcome="ok" if analysis.get("available")
+                        else "degraded")
+                    analysis["intersection_id"] = iid
+                    analysis["intersection_name"] = inter.name
+                    self._send_json(analysis)
+                elif route == "/api/plan/approve":
+                    plan = engine.approve(user_id,
+                                          str(body.get("plan_id", "")))
+                    self._send_json(plan.to_dict())
+                elif route == "/api/plan/reject":
+                    plan = engine.reject(user_id,
+                                         str(body.get("plan_id", "")),
+                                         str(body.get("reason", "")))
+                    self._send_json(plan.to_dict())
+                elif route == "/api/plan/rollback":
+                    plan = engine.rollback(user_id,
+                                           str(body.get("plan_id", "")))
+                    self._send_json(plan.to_dict())
+                elif route == "/api/mode":
+                    engine.set_mode(user_id,
+                                    OperatingMode(str(body.get("mode", ""))))
+                    self._send_json({"mode": engine.mode.value})
+                elif route == "/api/copilot/query":
+                    result = engine.copilot.query(
+                        user_id, str(body.get("text", "")))
+                    self._send_json(result)
+                else:
+                    self._send_json({"error": "not found"}, 404)
+            except AuthError as exc:
+                self._send_json({"error": str(exc)}, 401)
+            except PermissionDenied as exc:
+                self._send_json({"error": str(exc)}, 403)
+            except (InjectionBlocked, RateLimitExceeded) as exc:
+                self._send_json({"error": str(exc)}, 429)
+            except KeyError as exc:
+                self._send_json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                self._send_json({"error": f"internal: {exc}"}, 500)
+
+    return Handler
+
+
+def serve(host: str = "127.0.0.1", port: int = 8757,
+          background_ticks: bool = True, live: bool = True,
+          db_path: str = DEFAULT_DB, city: str = "seattle",
+          enable_vision: bool = True) -> None:
+    runtime = PlatformRuntime(live=live, db_path=db_path, city=city,
+                              enable_vision=enable_vision)
+    if background_ticks:
+        runtime.start_background()
+    httpd = ThreadingHTTPServer((host, port), make_handler(runtime))
+    print(f"Nexus City OS — {runtime.adapter.display_name}")
+    using_live = getattr(runtime.adapter, "using_live_topology", False)
+    print(f"Data: {'LIVE (regional cameras, OneBusAway transit, NWS)' if using_live else 'offline simulation'}")
+    print(f"Store: {db_path} (audit chain: "
+          f"{runtime.store.audit_count()} entries restored)")
+    print(f"Mode: {runtime.engine.mode.value.upper()}")
+    print(f"AI vision sweep: "
+          f"{'enabled' if runtime.vision_enabled else 'disabled'}")
+    print(f"Auth: session tokens required (demo accounts: op-1, admin-1, "
+          f"analyst-1, viewer-1)")
+    print(f"Operator UI:  http://{host}:{port}/")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        runtime.stop()
+        httpd.shutdown()
+
+
+def build_arg_parser():
+    """CLI for direct module launch and platform/run.py (Phase 5)."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="nexus-city-os",
+        description="Nexus City OS — smart-city traffic decision "
+                    "intelligence platform")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="bind address (default 127.0.0.1; use "
+                             "0.0.0.0 in containers)")
+    parser.add_argument("--port", type=int, default=8757,
+                        help="HTTP port (default 8757)")
+    parser.add_argument("--city", choices=sorted(CITY_ADAPTERS),
+                        default="seattle",
+                        help="city adapter to launch (default seattle)")
+    parser.add_argument("--sim", action="store_true",
+                        help="fully offline deterministic simulation "
+                             "(no live feeds, no LLM)")
+    parser.add_argument("--no-vision", action="store_true",
+                        help="disable the background AI vision sweep")
+    return parser
+
+
+if __name__ == "__main__":
+    _args = build_arg_parser().parse_args()
+    serve(host=_args.host, port=_args.port, live=not _args.sim,
+          city=_args.city, enable_vision=not _args.no_vision)

@@ -1,0 +1,20 @@
+services:
+  nexus:
+    build: .
+    image: nexus-city-os:latest
+    container_name: nexus-city-os
+    ports:
+      - "8757:8757"
+    volumes:
+      # Durable state: SQLite store (audit chain, history) + geometry cache.
+      - nexus-data:/app/platform/data
+    environment:
+      # Optional: enables WSDOT loop-detector flow ingestion for the
+      # real-congestion estimator (bus-GPS-only without it).
+      - WSDOT_ACCESS_CODE=${WSDOT_ACCESS_CODE:-}
+    # Override the city or disable features:
+    #   command: ["--city", "tacoma", "--no-vision"]
+    restart: unless-stopped
+
+volumes:
+  nexus-data:

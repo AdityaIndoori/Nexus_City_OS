@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus City OS — AI Decision Intelligence for City Traffic</title>
+<meta name="description" content="Nexus City OS: a zero-dependency, safety-gated AI platform for real-time smart-city traffic management. Live Seattle data, MUTCD-verified AI recommendations, human-in-the-loop control.">
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a30; --panel2:#0e1528; --line:#22304f;
+    --text:#dce6f5; --dim:#8fa3c2; --accent:#4da3ff; --good:#3ddc84;
+    --warn:#ffb547; --bad:#ff5d5d;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{background:var(--bg); color:var(--text);
+       font:16px/1.6 "Segoe UI",system-ui,sans-serif;}
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  .wrap{max-width:1040px; margin:0 auto; padding:0 24px;}
+  /* hero */
+  header.hero{padding:90px 0 60px; text-align:center;
+    background:radial-gradient(ellipse at 50% -20%, #16306622, transparent 60%),
+               linear-gradient(180deg, #0d1430, var(--bg));}
+  .hero h1{font-size:46px; letter-spacing:1px; line-height:1.15;}
+  .hero h1 span{color:var(--accent);}
+  .hero .tag{color:var(--dim); font-size:19px; max-width:720px;
+             margin:18px auto 0;}
+  .badges{display:flex; gap:10px; justify-content:center; flex-wrap:wrap;
+          margin-top:26px;}
+  .badge{padding:5px 14px; border-radius:14px; font-size:13px;
+         border:1px solid var(--line); color:var(--dim);}
+  .badge.live{border-color:#1f6b44; color:var(--good);}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap;
+       margin-top:34px;}
+  .btn{display:inline-block; padding:12px 28px; border-radius:8px;
+       font-weight:700; font-size:15px; border:1px solid var(--line);}
+  .btn.primary{background:#114a86; border-color:#1d6cc0; color:#fff;}
+  .btn.primary:hover{background:#1560ad; text-decoration:none;}
+  .btn.ghost:hover{border-color:var(--accent); text-decoration:none;}
+  /* terminal */
+  .term{background:#0a0f1d; border:1px solid var(--line); border-radius:10px;
+        max-width:680px; margin:46px auto 0; text-align:left;
+        font:14px/1.7 Consolas,Menlo,monospace; overflow:hidden;}
+  .term .bar{background:var(--panel); padding:8px 14px; font-size:12px;
+             color:var(--dim); border-bottom:1px solid var(--line);}
+  .term pre{padding:16px 20px; overflow-x:auto; color:#b8c8e8;}
+  .term .c{color:#5a7194;} .term .g{color:var(--good);}
+  /* sections */
+  section{padding:64px 0;}
+  section h2{font-size:26px; margin-bottom:8px;}
+  section .sub{color:var(--dim); margin-bottom:34px; max-width:760px;}
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
+        gap:18px;}
+  .card{background:var(--panel); border:1px solid var(--line);
+        border-radius:10px; padding:22px;}
+  .card .ic{font-size:26px;}
+  .card h3{font-size:17px; margin:10px 0 6px;}
+  .card p{color:var(--dim); font-size:14px;}
+  .card .pill{display:inline-block; margin-top:10px; padding:2px 10px;
+              border-radius:10px; font-size:11px; border:1px solid #1f6b44;
+              color:var(--good);}
+  /* safety list */
+  .safety{background:var(--panel2); border-top:1px solid var(--line);
+          border-bottom:1px solid var(--line);}
+  .safety ol{margin:0; padding-left:0; list-style:none; display:grid;
+             grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+             gap:12px;}
+  .safety li{background:var(--panel); border:1px solid var(--line);
+             border-radius:8px; padding:13px 16px; font-size:14.5px;
+             color:var(--dim);}
+  .safety li b{color:var(--text);}
+  .safety li::before{content:"✓ "; color:var(--good); font-weight:700;}
+  /* data table */
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--line);}
+  th{color:var(--dim); text-transform:uppercase; font-size:11.5px;
+     letter-spacing:.6px;}
+  td:first-child{color:var(--text); font-weight:600; white-space:nowrap;}
+  td{color:var(--dim);}
+  .livechip{color:var(--good); font-size:12px; font-weight:700;}
+  /* footer */
+  footer{padding:46px 0 60px; border-top:1px solid var(--line);
+         color:var(--dim); font-size:14px; text-align:center;}
+  @media (max-width:640px){ .hero h1{font-size:32px;}
+    .safety ol{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>NEXUS <span>CITY OS</span></h1>
+    <p class="tag">AI decision intelligence for real-time city traffic
+      management — built on <b>live municipal data</b>, gated by a
+      <b>provable safety envelope</b>, controlled by
+      <b>humans at every step</b>.</p>
+    <div class="badges">
+      <span class="badge live">● 114 tests passing</span>
+      <span class="badge">Python stdlib — zero dependencies</span>
+      <span class="badge">Seattle + Tacoma live adapters</span>
+      <span class="badge">Docker + CI ready</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/AdityaIndoori/Nexus_City_OS">View on GitHub →</a>
+      <a class="btn ghost" href="#quickstart">Quick start</a>
+    </div>
+    <div class="term">
+      <div class="bar">cmd — nexus city os</div>
+      <pre><span class="c"># zero pip installs — clone and run</span>
+git clone https://github.com/AdityaIndoori/Nexus_City_OS.git
+cd Nexus_City_OS
+python platform/run.py
+<span class="g">Nexus City OS — Seattle, WA — Citywide (LIVE data)
+Data: LIVE (regional cameras, OneBusAway transit, NWS)
+Operator UI:  http://127.0.0.1:8757/</span></pre>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="sub">A software-only layer that rides on a city's <i>existing</i>
+      cameras, transit feeds, and signal infrastructure — no $116K-per-intersection
+      hardware retrofits.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">🗺</div>
+        <h3>Living City Graph</h3>
+        <p>~420 real Seattle camera intersections, 300+ live KC Metro buses,
+        real NWS weather, and SFD Real-Time 911 dispatches fused into one
+        operational picture with real road geometry.</p>
+        <span class="pill">live data, no API keys</span></div>
+      <div class="card"><div class="ic">📡</div>
+        <h3>Real Congestion Sensing</h3>
+        <p>Every moving bus is a GPS speed probe. Per-intersection congestion
+        is computed from real observed speeds (weighted median, freshness
+        windows) — optionally fused with WSDOT loop-detector flow.</p>
+        <span class="pill">bus GPS × WSDOT flow</span></div>
+      <div class="card"><div class="ic">👁</div>
+        <h3>AI Vision Detection</h3>
+        <p>A background sweep runs Claude Haiku on live traffic-camera frames,
+        raising real incidents through the same audited pipeline as edge
+        telemetry — congested intersections checked first.</p>
+        <span class="pill">multimodal LLM on live frames</span></div>
+      <div class="card"><div class="ic">🤖</div>
+        <h3>Safety-Gated AI Plans</h3>
+        <p>Claude Sonnet proposes signal-timing mitigations — then an
+        <b>independent</b> MUTCD constraint verifier, hallucination monitor,
+        provenance check, and confidence gate decide if an operator ever
+        sees them. The LLM is never trusted.</p>
+        <span class="pill">blocked &lt; 2% target, proven by tests</span></div>
+      <div class="card"><div class="ic">🧑‍✈️</div>
+        <h3>Human-in-the-Loop, Always</h3>
+        <p>Shadow → Advisory → Live mode ladder. Every plan needs explicit
+        operator approval; one-click rollback restores exact prior timing;
+        auto-revert proposals fire if conditions worsen.</p>
+        <span class="pill">no autonomous execution</span></div>
+      <div class="card"><div class="ic">⛓</div>
+        <h3>Tamper-Evident Audit</h3>
+        <p>Every detection, recommendation, approval, and rollback lands in a
+        hash-chained audit trail that survives restarts — incident timelines
+        in the UI are reconstructed straight from it.</p>
+        <span class="pill">verify_chain() live in the UI</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="safety">
+  <div class="wrap">
+    <h2>The safety moat</h2>
+    <p class="sub">Each guarantee is enforced by code and proven by the
+      automated test suite — the suite <i>is</i> the trust artifact.</p>
+    <ol>
+      <li><b>R1–R7 MUTCD guardrails</b> — minimum greens, pedestrian clearance,
+        yellow intervals, cycle bounds, concurrency limits, EMS-corridor protection</li>
+      <li><b>H1–H4 hallucination monitoring</b> — plans citing nonexistent
+        entities or stale data are blocked before review</li>
+      <li><b>Mandatory provenance</b> — no sources, no weather, no rationale → suppressed</li>
+      <li><b>Confidence abstention</b> — below threshold, the AI says
+        "insufficient data confidence" instead of guessing</li>
+      <li><b>Mode ladder</b> — no code path executes a physical change in
+        Shadow or Advisory mode</li>
+      <li><b>Privacy at the edge</b> — unredacted telemetry is rejected at
+        ingestion; raw video never enters the platform</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Live data sources</h2>
+    <p class="sub">Default Seattle deployment — all public feeds, no signup.</p>
+    <table>
+      <tr><th>Layer</th><th>Source</th><th></th></tr>
+      <tr><td>Cameras &amp; topology</td><td>SDOT/WSDOT camera registry + live JPEG frames</td><td class="livechip">LIVE</td></tr>
+      <tr><td>Transit</td><td>OneBusAway Puget Sound (KC Metro / Pierce Transit, GTFS-RT)</td><td class="livechip">LIVE</td></tr>
+      <tr><td>Congestion</td><td>Bus-GPS speed probes + optional WSDOT flow</td><td class="livechip">LIVE</td></tr>
+      <tr><td>Weather</td><td>National Weather Service (KBFI / KTIW)</td><td class="livechip">LIVE</td></tr>
+      <tr><td>911 dispatches</td><td>Seattle Fire Dept Real-Time 911 (Socrata)</td><td class="livechip">LIVE</td></tr>
+      <tr><td>AI models</td><td>Claude Sonnet 4.5 (planning) · Claude Haiku 4.5 (vision/chat) — optional; deterministic expert system otherwise</td><td></td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="quickstart" class="safety">
+  <div class="wrap">
+    <h2>Quick start</h2>
+    <p class="sub">Python 3.10+ and nothing else. The whole platform —
+      server, AI gate, simulation, UI — is standard library.</p>
+    <div class="term" style="margin:0;max-width:none">
+      <div class="bar">quick start</div>
+      <pre><span class="c"># run the test suite (network-free)</span>
+python -m unittest discover -s platform/tests -t platform
+
+<span class="c"># launch with live Seattle data (default), or:</span>
+python platform/run.py --city tacoma   <span class="c"># second city, zero new keys</span>
+python platform/run.py --sim           <span class="c"># fully offline demo mode</span>
+
+<span class="c"># or containerized</span>
+docker compose up --build</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><b style="color:var(--text)">NEXUS <span style="color:var(--accent)">CITY OS</span></b>
+      — reference implementation · Seattle-first, extensible to any city</p>
+    <p style="margin-top:8px">
+      <a href="https://github.com/AdityaIndoori/Nexus_City_OS">GitHub</a> ·
+      <a href="https://github.com/AdityaIndoori/Nexus_City_OS/blob/main/README.md">README</a> ·
+      <a href="https://github.com/AdityaIndoori/Nexus_City_OS/blob/main/PRD_v2.md">PRD</a> ·
+      <a href="https://github.com/AdityaIndoori/Nexus_City_OS/blob/main/MARKET_RESEARCH.md">Market research</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

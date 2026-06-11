@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus City OS — Traffic Operations Center</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a30; --panel2:#0e1528; --line:#22304f;
+    --text:#dce6f5; --dim:#8fa3c2; --accent:#4da3ff; --good:#3ddc84;
+    --warn:#ffb547; --bad:#ff5d5d; --crit:#ff3860;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--text);
+       font:14px/1.45 "Segoe UI",system-ui,sans-serif; height:100vh;
+       display:flex; flex-direction:column; overflow:hidden;}
+  header{display:flex; align-items:center; gap:14px; padding:10px 16px;
+         background:var(--panel); border-bottom:1px solid var(--line);
+         flex:0 0 auto;}
+  header h1{font-size:16px; letter-spacing:.5px; white-space:nowrap;}
+  header h1 span{color:var(--accent);}
+  ::-webkit-scrollbar{width:8px; height:8px;}
+  ::-webkit-scrollbar-thumb{background:#243353; border-radius:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  .modebadge{padding:3px 12px; border-radius:12px; font-weight:700;
+             font-size:12px; text-transform:uppercase; letter-spacing:1px;}
+  .mode-shadow{background:#2a3656; color:#9db8e8; border:1px solid #41538a;}
+  .mode-advisory{background:#4d3a14; color:var(--warn); border:1px solid #806022;}
+  .mode-live{background:#15402a; color:var(--good); border:1px solid #1f6b44;}
+  .databadge{padding:3px 10px; border-radius:12px; font-size:11px;
+             font-weight:700; letter-spacing:.5px;}
+  .data-live{background:#10331f; color:var(--good); border:1px solid #1f6b44;}
+  .data-sim{background:#2a3656; color:#9db8e8; border:1px solid #41538a;}
+  .spacer{flex:1;}
+  .feedchips{display:flex; gap:6px;}
+  .chip{padding:2px 9px; border-radius:10px; font-size:11px;
+        border:1px solid var(--line); color:var(--dim);}
+  .chip.fresh{border-color:#1f6b44; color:var(--good);}
+  .chip.fresh::before{content:"✓ ";}
+  .chip.amber{border-color:#806022; color:var(--warn);}
+  .chip.amber::before{content:"△ ";}
+  .chip.stale,.chip.missing{border-color:#7a2230; color:var(--bad);}
+  .chip.stale::before,.chip.missing::before{content:"✕ ";}
+  main{flex:1; display:grid; grid-template-columns: 1fr 430px;
+       grid-template-rows: minmax(0,1fr) 225px; gap:8px; padding:8px;
+       min-height:0;}
+  .panel{background:var(--panel); border:1px solid var(--line);
+         border-radius:8px; display:flex; flex-direction:column;
+         min-height:0; overflow:hidden;}
+  .panel h2{font-size:12px; text-transform:uppercase; letter-spacing:1px;
+            color:var(--dim); padding:8px 12px;
+            border-bottom:1px solid var(--line); flex:0 0 auto;}
+  .panel .body{flex:1; overflow-y:auto; padding:8px 12px; min-height:0;}
+  /* map */
+  #mappanel{grid-column:1; grid-row:1; position:relative;}
+  #map{flex:1; min-height:0; background:#0b1020;}
+  .leaflet-container{background:#1a2233;}
+  .leaflet-tile{filter:brightness(.72) contrast(1.05) saturate(.75);}
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip{
+    background:var(--panel2); color:var(--text);
+    border:1px solid var(--line);}
+  .leaflet-popup-content{margin:10px 12px; font:12px/1.5 "Segoe UI",sans-serif;}
+  .popimg{width:280px; max-width:280px; border-radius:6px;
+          border:1px solid var(--line); display:block; margin:6px 0;}
+  .legend{display:flex; gap:14px; padding:6px 12px; font-size:11px;
+          color:var(--dim); border-top:1px solid var(--line); flex:0 0 auto;
+          flex-wrap:wrap;}
+  .dot{display:inline-block; width:9px; height:9px; border-radius:50%;
+       margin-right:4px; vertical-align:-1px;}
+  .lyrtoggle{cursor:pointer; user-select:none;}
+  .lyrtoggle.off{opacity:.4;}
+  #locatebtn{position:absolute; right:10px; top:44px; z-index:1000;
+             width:34px; height:34px; padding:0; font-size:17px;
+             border-radius:6px;}
+  #fsbtn{position:absolute; right:10px; top:84px; z-index:1000;
+         width:34px; height:34px; padding:0; font-size:15px;
+         border-radius:6px;}
+  #mappanel.fullscreen{position:fixed; inset:0; z-index:1400;
+                       border-radius:0;}
+  /* location chips under AI answers */
+  .locrow{display:flex; gap:4px; flex-wrap:wrap; margin-top:5px;}
+  .locbtn{margin:0; padding:1px 8px; font-size:10px; border-radius:9px;
+          background:#11264a; border-color:#1d4f8a;}
+  /* incident queue filter bar */
+  .filterbar{display:flex; gap:5px; padding:6px 12px; flex-wrap:wrap;
+             border-bottom:1px solid var(--line); flex:0 0 auto;}
+  .fbtn{margin:0; padding:2px 10px; font-size:11px; border-radius:10px;
+        background:var(--panel2);}
+  .fbtn.on{background:#114a86; border-color:#1d6cc0; font-weight:700;}
+  /* 911 event cards in the queue */
+  .emcard{cursor:pointer;}
+  .emcard:hover{border-color:var(--accent);}
+  /* incidents & plans */
+  #sidepanel{grid-column:2; grid-row:1 / 3;}
+  .card{background:var(--panel2); border:1px solid var(--line);
+        border-radius:6px; padding:8px 10px; margin-bottom:8px;}
+  .card h3{font-size:13px; margin-bottom:4px;}
+  .meta{color:var(--dim); font-size:11px;}
+  .sev{font-weight:700;}
+  .sev.high{color:var(--bad);} .sev.med{color:var(--warn);}
+  .state{display:inline-block; padding:1px 8px; border-radius:8px;
+         font-size:10px; text-transform:uppercase; letter-spacing:.5px;
+         border:1px solid var(--line); color:var(--dim);}
+  .camthumb{width:100%; max-height:150px; object-fit:cover;
+            border-radius:6px; border:1px solid var(--line);
+            margin-top:6px; cursor:pointer; transition:max-height .2s;}
+  .camthumb.expanded{max-height:400px; object-fit:contain;}
+  button{background:#1c2c52; color:var(--text); border:1px solid #2f447c;
+         border-radius:5px; padding:4px 12px; font-size:12px; cursor:pointer;
+         margin:4px 6px 0 0;}
+  button:hover{background:#26396a;}
+  button.primary{background:#114a86; border-color:#1d6cc0;}
+  button.danger{background:#5b1a26; border-color:#8a2a3c;}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  /* async-busy buttons: inline spinner + disabled look */
+  @keyframes spin{to{transform:rotate(360deg);}}
+  button.busy{opacity:.65; pointer-events:none;}
+  button.busy::before{content:""; display:inline-block; width:10px;
+    height:10px; margin-right:6px; vertical-align:-1px;
+    border:2px solid var(--accent); border-top-color:transparent;
+    border-radius:50%; animation:spin .7s linear infinite;}
+  .conf{font-weight:700; color:var(--accent);}
+  .blocked{color:var(--bad); font-size:12px;}
+  /* structured AI plan */
+  .oprow{display:flex; align-items:center; gap:8px; background:#101a33;
+         border:1px solid var(--line); border-radius:6px;
+         padding:6px 9px; margin:4px 0; font-size:12px;}
+  .oprow .opdelta{font-weight:700; color:var(--good); white-space:nowrap;
+                  font-size:13px; min-width:44px;}
+  .oprow .opname{color:var(--text);}
+  .oprow .opphase{color:var(--dim); font-size:10px; margin-left:auto;
+                  white-space:nowrap;}
+  details.why{margin:4px 0;}
+  details.why summary{cursor:pointer; color:var(--accent); font-size:11px;
+                      list-style:none; user-select:none;}
+  details.why summary::before{content:"▸ ";}
+  details.why[open] summary::before{content:"▾ ";}
+  details.why .whytext{font-size:12px; color:var(--dim); margin-top:4px;
+                       border-left:2px solid var(--line); padding-left:8px;}
+  .planchips{display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;}
+  .pchip{padding:1px 8px; border-radius:9px; font-size:10px;
+         border:1px solid var(--line); color:var(--dim); white-space:nowrap;}
+  .pchip.good{border-color:#1f6b44; color:var(--good);}
+  .pchip.warn{border-color:#806022; color:var(--warn);}
+  /* severity bar */
+  .sevwrap{display:flex; align-items:center; gap:6px; margin-top:3px;}
+  .sevbar{flex:0 0 64px; height:6px; border-radius:3px; background:#1c2945;
+          overflow:hidden;}
+  .sevbar i{display:block; height:100%; border-radius:3px;}
+  /* KPI grid (safety metrics) */
+  .kpis{display:grid; grid-template-columns:repeat(3,1fr); gap:5px;}
+  .kpi{background:var(--panel2); border:1px solid var(--line);
+       border-radius:6px; padding:5px 4px; text-align:center;}
+  .kpi b{display:block; font-size:15px; color:var(--accent); line-height:1.2;}
+  .kpi span{font-size:9.5px; color:var(--dim); text-transform:uppercase;
+            letter-spacing:.4px;}
+  /* segmented mode control */
+  .seg{display:flex; border:1px solid var(--line); border-radius:6px;
+       overflow:hidden;}
+  .seg button{margin:0; border:none; border-radius:0; padding:3px 12px;
+              font-size:11px; text-transform:capitalize;
+              background:var(--panel2);}
+  .seg button.on{background:#114a86; color:#fff; font-weight:700;}
+  /* copilot chat bubbles */
+  .chatmsg{margin:4px 0; padding:5px 9px; border-radius:7px; font-size:12px;}
+  .chatmsg.you{background:#16233f;}
+  .chatmsg.bot{background:#0f1a30; border-left:2px solid var(--accent);}
+  .chatmsg .who{font-size:10px; color:var(--dim); text-transform:uppercase;
+                letter-spacing:.5px; display:block; margin-bottom:1px;}
+  /* bottom strip */
+  #bottompanels{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;
+                grid-column:1; grid-row:2; min-height:0;}
+  .alert{padding:5px 8px; border-left:3px solid var(--warn);
+         background:var(--panel2); margin-bottom:6px; font-size:12px;}
+  .alert.critical{border-color:var(--crit);}
+  .alert.high{border-color:var(--bad);}
+  .audit-entry{font-size:11px; color:var(--dim); padding:3px 0;
+               border-bottom:1px dotted #1c2945;}
+  .audit-entry b{color:var(--text);}
+  #toast{position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+         background:#16213c; border:1px solid var(--accent); padding:9px 18px;
+         border-radius:8px; display:none; z-index:1200; max-width:70%;}
+  select,input{background:var(--panel2); color:var(--text);
+               border:1px solid var(--line); border-radius:5px;
+               padding:4px 8px; font-size:12px;}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  a{color:var(--accent);}
+  /* login overlay */
+  #loginoverlay{position:fixed; inset:0; background:rgba(5,8,18,.92);
+                display:flex; align-items:center; justify-content:center;
+                z-index:2000;}
+  #loginbox{background:var(--panel); border:1px solid var(--line);
+            border-radius:10px; padding:28px 32px; width:360px;}
+  #loginbox h2{font-size:15px; letter-spacing:1px; color:var(--text);
+               margin-bottom:4px;}
+  #loginbox .sub{color:var(--dim); font-size:11px; margin-bottom:14px;}
+  #loginbox label{display:block; font-size:11px; color:var(--dim);
+                  margin:10px 0 3px;}
+  #loginbox input{width:100%; padding:7px 10px; font-size:13px;}
+  #loginbox button{width:100%; margin-top:16px; padding:8px;}
+  #loginerr{color:var(--bad); font-size:12px; margin-top:10px; min-height:16px;}
+  .userbadge{font-size:11px; color:var(--dim);}
+  .userbadge b{color:var(--text);}
+  #livedot{display:inline-block; width:8px; height:8px; border-radius:50%;
+           background:var(--dim); margin-right:4px; vertical-align:0;}
+  #livedot.on{background:var(--good); box-shadow:0 0 6px var(--good);}
+  .acctchips{display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;}
+  .acctchips button{flex:1; margin:0; padding:5px 4px; font-size:11px;
+                    width:auto;}
+  .acctchips button.sel{background:#114a86; border-color:#1d6cc0;}
+  /* generic modal */
+  #modal{position:fixed; inset:0; background:rgba(5,8,18,.85);
+         display:none; align-items:center; justify-content:center;
+         z-index:1500;}
+  #modalbox{background:var(--panel); border:1px solid var(--line);
+            border-radius:10px; padding:18px 22px; width:440px;
+            max-height:80vh; overflow-y:auto;}
+  #modalbox h3{font-size:13px; text-transform:uppercase; letter-spacing:1px;
+               color:var(--dim); margin-bottom:10px;}
+  .instr{background:var(--panel2); border:1px solid var(--line);
+         border-radius:6px; padding:8px 10px; margin-bottom:8px;
+         font-size:12px;}
+  .instr b{color:var(--text);} .instr .chg{color:var(--good); font-weight:700;}
+  /* tabbed bottom-left panel (Safety | Analytics) */
+  .paneltab{cursor:pointer; user-select:none; opacity:.55;
+            padding-bottom:2px; border-bottom:2px solid transparent;}
+  .paneltab.on{opacity:1; color:var(--text);
+               border-bottom-color:var(--accent);}
+  /* analytics hour bars */
+  .hourbars{display:flex; align-items:flex-end; gap:2px; height:46px;
+            margin:4px 0 2px;}
+  .hourbars .hb{flex:1; min-width:3px; background:var(--accent);
+                border-radius:2px 2px 0 0; opacity:.8;}
+  .hotrow{display:flex; align-items:center; gap:6px; font-size:11px;
+          padding:2px 0; cursor:pointer; border-bottom:1px dotted #1c2945;}
+  .hotrow:hover{color:var(--accent);}
+  .hotbar{flex:0 0 54px; height:5px; border-radius:3px; background:#1c2945;
+          overflow:hidden;}
+  .hotbar i{display:block; height:100%; border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="loginoverlay" role="dialog" aria-label="Sign in">
+  <div id="loginbox">
+    <h2>NEXUS <span style="color:var(--accent)">CITY OS</span> — SIGN IN</h2>
+    <div class="sub">Traffic Operations Center · sessions are audit-logged</div>
+    <label for="li_user">User ID</label>
+    <input id="li_user" value="op-1" autocomplete="username">
+    <label for="li_pass">Password</label>
+    <input id="li_pass" type="password" value="nexus-op-1"
+           autocomplete="current-password">
+    <button class="primary" onclick="doLogin()">Sign in</button>
+    <div id="loginerr" role="alert"></div>
+    <div class="sub" style="margin-top:12px;margin-bottom:0">Quick select (demo):</div>
+    <div class="acctchips">
+      <button class="sel" onclick="pickAcct(this,'op-1')">operator</button>
+      <button onclick="pickAcct(this,'admin-1')">admin</button>
+      <button onclick="pickAcct(this,'analyst-1')">analyst</button>
+      <button onclick="pickAcct(this,'viewer-1')">viewer</button>
+    </div>
+  </div>
+</div>
+<div id="modal" role="dialog" aria-modal="true">
+  <div id="modalbox">
+    <h3 id="modaltitle"></h3>
+    <div id="modalcontent"></div>
+    <button class="primary" onclick="$('modal').style.display='none'">Close</button>
+  </div>
+</div>
+<header>
+  <h1>NEXUS <span>CITY OS</span> — <span id="cityname">SEATTLE</span></h1>
+  <span id="modebadge" class="modebadge mode-shadow">SHADOW</span>
+  <span id="databadge" class="databadge data-sim">…</span>
+  <span id="congsrc" class="databadge data-sim" title="How intersection congestion is being computed" style="display:none"></span>
+  <span class="userbadge" id="userbadge"></span>
+  <div class="spacer"></div>
+  <span class="userbadge"><span id="livedot"></span><span id="pushstate">connecting…</span></span>
+  <div class="feedchips" id="feedchips" aria-label="Data feed freshness"></div>
+</header>
+
+<main>
+  <section class="panel" id="mappanel" aria-label="Live Grid map">
+    <h2>Live Grid — Seattle <span id="weatherline" style="float:right;text-transform:none;letter-spacing:0"></span></h2>
+    <div id="map" role="application" aria-label="Seattle live traffic map"></div>
+    <button id="locatebtn" onclick="locateMe()" title="Center on my location" aria-label="My location">⌖</button>
+    <button id="fsbtn" onclick="toggleFullscreen()" title="Fullscreen map (Esc to exit)" aria-label="Fullscreen map">⛶</button>
+    <div class="legend">
+      <span class="meta">Layers:</span>
+      <span class="lyrtoggle" id="lyr_traffic" onclick="toggleLayer('traffic')" title="Traffic flow: green free / amber congested / red severe (lines follow real road paths)">
+        <span class="dot" style="background:var(--good)"></span><span class="dot" style="background:var(--warn);margin-left:-7px"></span><span class="dot" style="background:var(--bad);margin-left:-7px"></span>Traffic <span class="tg">☑</span></span>
+      <span class="lyrtoggle" id="lyr_bus" onclick="toggleLayer('bus')" title="Live KC Metro buses">
+        <span class="dot" style="background:#62d0ff"></span>Buses <span class="tg">☑</span></span>
+      <span class="lyrtoggle" id="lyr_em" onclick="toggleLayer('em')" title="Seattle Fire Dept Real-Time 911 (data.seattle.gov)">
+        <span class="dot" style="background:#ff8c42"></span><b id="emcount" style="color:var(--warn)">911</b> <span class="tg">☑</span></span>
+      <span class="lyrtoggle off" id="lyr_notif" onclick="toggleNotifications()" title="Browser notifications for new traffic-impacting 911 dispatches">
+        🔔 Notify <span class="tg">☐</span></span>
+      <span id="coverageline" style="margin-left:auto">Click an intersection: live camera + scenario injection</span>
+    </div>
+  </section>
+
+  <section class="panel" id="sidepanel" aria-label="Incidents and recommendations">
+    <h2>Incident Queue &amp; AI Recommendations</h2>
+    <div class="filterbar" id="filterbar" role="group" aria-label="Filter queue and map"></div>
+    <div class="body" id="incidents"></div>
+  </section>
+
+  <div id="bottompanels">
+    <section class="panel" aria-label="Safety metrics and analytics">
+      <h2 style="display:flex;gap:10px;align-items:center">
+        <span id="tab_safety" class="paneltab on" onclick="setPanelTab('safety')">AI Safety Metrics</span>
+        <span id="tab_analytics" class="paneltab" onclick="setPanelTab('analytics')">Analytics</span>
+      </h2>
+      <div class="body" id="safety"></div>
+      <div class="body" id="analytics" style="display:none"></div>
+    </section>
+    <section class="panel" aria-label="AI copilot and alerts">
+      <h2>AI Copilot <span style="float:right;text-transform:none;letter-spacing:0;color:var(--dim)">Claude Haiku 4.5 · grounded</span></h2>
+      <div class="body" id="copilotbody">
+        <div id="chatlog" style="font-size:12px;"></div>
+        <div class="row" style="margin-top:6px">
+          <input id="chatin" placeholder="Ask about congestion, incidents, transit…" style="flex:1" aria-label="Copilot question">
+          <button class="primary" id="askbtn" onclick="busy(this, askCopilot)">Ask</button>
+        </div>
+        <div id="alerts" style="margin-top:8px"></div>
+      </div>
+    </section>
+    <section class="panel" aria-label="Audit trail">
+      <h2>Audit Trail <span id="chainstate"></span></h2>
+      <div class="body" id="audit"></div>
+    </section>
+  </div>
+</main>
+
+<div id="toast" role="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+let TOKEN = sessionStorage.getItem("nexus_token") || "";
+let SESSION = JSON.parse(sessionStorage.getItem("nexus_session") || "null");
+let grid = null, status_ = null;
+let map = null, interLayer = null, vehLayer = null, emLayer = null,
+    segLayer = null;
+const segLines = {};          // segment id -> polyline
+let emergencies = [], hazards = [];
+const layerOn = {traffic:true, bus:true, em:true};
+// Queue/map category filters: which event classes are visible.
+const FILTERS = ["traffic_incidents","fire","mva","medical","rescue",
+                 "hazmat","violence","other"];
+const FILTER_LABELS = {traffic_incidents:"⚠ Traffic", fire:"🔥 Fire",
+  mva:"🚗 MVA", medical:"🚑 Medical", rescue:"⛑ Rescue",
+  hazmat:"☣ Hazmat", violence:"🚨 Violence", other:"📟 Other"};
+const filterOn = Object.fromEntries(FILTERS.map(f=>[f,true]));
+let myLocMarker = null;
+const emMarkers = {};         // emergency id -> marker
+const interMarkers = {};      // intersection id -> circleMarker
+const vehMarkers = {};        // vehicle id -> circleMarker
+const camByIntersection = {}; // intersection id -> [camera objects]
+
+function $(id){return document.getElementById(id);}
+
+// Wrap an async action: the clicked button shows a spinner and disables
+// until the call settles (SSE re-renders replace the button on success).
+async function busy(btn, fn){
+  if(btn?.classList?.contains("busy")) return;
+  btn?.classList?.add("busy");
+  try{ await fn(); }
+  finally{ btn?.classList?.remove("busy"); }
+}
+window.busy = busy;
+
+function toast(msg){const t=$("toast"); t.textContent=msg;
+  t.style.display="block"; clearTimeout(t._h);
+  t._h=setTimeout(()=>t.style.display="none", 3500);}
+
+async function api(path, body){
+  const headers = {"Authorization": "Bearer "+TOKEN};
+  const opts = body!==undefined
+    ? {method:"POST", headers:{...headers,"Content-Type":"application/json"},
+       body:JSON.stringify(body)}
+    : {headers};
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if(r.status===401){ showLogin(); throw new Error(data.error||"Sign in required"); }
+  if(!r.ok){ throw new Error(data.error || r.statusText); }
+  return data;
+}
+
+/* ---------- auth ---------- */
+function showLogin(){ document.getElementById("loginoverlay").style.display="flex"; }
+function hideLogin(){ document.getElementById("loginoverlay").style.display="none"; }
+async function doLogin(){
+  const err = $("loginerr"); err.textContent = "";
+  try{
+    const r = await fetch("/api/login", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({user_id: $("li_user").value.trim(),
+                            password: $("li_pass").value})});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.error || "Login failed");
+    TOKEN = data.token; SESSION = data;
+    sessionStorage.setItem("nexus_token", TOKEN);
+    sessionStorage.setItem("nexus_session", JSON.stringify(data));
+    hideLogin(); renderUser(); connectEvents(); refresh();
+    toast(`Signed in as ${data.user_id} (${data.role}) — session audit-logged`);
+  }catch(e){ err.textContent = e.message; }
+}
+window.doLogin = doLogin;
+async function doLogout(){
+  try{ await api("/api/logout", {}); }catch(e){}
+  TOKEN=""; SESSION=null;
+  sessionStorage.removeItem("nexus_token");
+  sessionStorage.removeItem("nexus_session");
+  if(eventSource){ eventSource.close(); eventSource=null; }
+  renderUser(); showLogin();
+}
+window.doLogout = doLogout;
+function renderUser(){
+  $("userbadge").innerHTML = SESSION
+    ? `signed in: <b>${SESSION.user_id}</b> (${SESSION.role})
+       <button style="padding:1px 8px;margin-left:6px" onclick="doLogout()">Sign out</button>`
+    : "";
+}
+function pickAcct(btn, uid){
+  $("li_user").value = uid;
+  $("li_pass").value = "nexus-" + uid;
+  document.querySelectorAll(".acctchips button").forEach(
+    b=>b.classList.toggle("sel", b===btn));
+}
+window.pickAcct = pickAcct;
+document.getElementById("li_pass").addEventListener("keydown",
+  e=>{ if(e.key==="Enter") doLogin(); });
+document.getElementById("chatin").addEventListener("keydown",
+  e=>{ if(e.key==="Enter") busy($("askbtn"), askCopilot); });
+
+/* ---------- real-time push (SSE) ---------- */
+let eventSource = null, refreshQueued = false;
+function connectEvents(){
+  if(eventSource) eventSource.close();
+  eventSource = new EventSource("/api/events?token="+encodeURIComponent(TOKEN));
+  eventSource.onopen = ()=>{ $("livedot").className="on";
+    $("pushstate").textContent="live push"; };
+  eventSource.onerror = ()=>{ $("livedot").className="";
+    $("pushstate").textContent="reconnecting…"; };
+  eventSource.onmessage = ()=>{
+    // coalesce bursts into one refresh per 400ms
+    if(refreshQueued) return;
+    refreshQueued = true;
+    setTimeout(()=>{ refreshQueued=false; refresh(); }, 400);
+  };
+}
+
+function congestionColor(c, hasIncident){
+  if(hasIncident) return "#ff3860";
+  if(c>0.7) return "#ff5d5d";
+  if(c>0.45) return "#ffb547";
+  return "#3ddc84";
+}
+
+let mapFitted = false;
+function initMap(){
+  map = L.map("map", {zoomControl:true, attributionControl:true})
+       .setView([47.615, -122.33], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  segLayer = L.layerGroup().addTo(map);
+  interLayer = L.layerGroup().addTo(map);
+  vehLayer = L.layerGroup().addTo(map);
+  emLayer = L.layerGroup().addTo(map);
+}
+
+/* ---------- fullscreen map ---------- */
+let mapFullscreen = false;
+function toggleFullscreen(){
+  mapFullscreen = !mapFullscreen;
+  $("mappanel").classList.toggle("fullscreen", mapFullscreen);
+  $("fsbtn").textContent = mapFullscreen ? "✕" : "⛶";
+  setTimeout(()=>map.invalidateSize(), 60);
+}
+window.toggleFullscreen = toggleFullscreen;
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape" && mapFullscreen) toggleFullscreen();
+});
+
+/* ---------- Citizen-style 911 emergency layer (SFD Real-Time 911) ------- */
+const EM_COLORS = {fire:"#ff5d2e", fire_alarm:"#c97b3d", medical:"#ff8c42",
+  mva:"#ff3860", rescue:"#d957ff", hazmat:"#ffe14d", violence:"#ff2e63",
+  other:"#9aa7bd"};
+const EM_ICONS = {fire:"🔥", fire_alarm:"🔔", medical:"🚑", mva:"🚗",
+  rescue:"⛑", hazmat:"☣", violence:"🚨", other:"📟"};
+// fire_alarm displays under the "fire" filter bucket
+function emFilterKey(cat){ return cat==="fire_alarm" ? "fire" : cat; }
+
+function toggleLayer(name){
+  layerOn[name] = !layerOn[name];
+  const layers = {traffic:[segLayer, interLayer], bus:[vehLayer],
+                  em:[emLayer]}[name];
+  layers.forEach(l=>{
+    if(layerOn[name]) l.addTo(map); else map.removeLayer(l);
+  });
+  const el = $("lyr_"+name);
+  el.classList.toggle("off", !layerOn[name]);
+  el.querySelector(".tg").textContent = layerOn[name] ? "☑" : "☐";
+}
+window.toggleLayer = toggleLayer;
+
+function toggleFilter(f){
+  filterOn[f] = !filterOn[f];
+  renderFilterBar(); renderEmergencies(); renderIncidents();
+}
+window.toggleFilter = toggleFilter;
+
+function renderFilterBar(){
+  const counts = {};
+  emergencies.forEach(e=>{
+    const k = emFilterKey(e.category);
+    counts[k] = (counts[k]||0) + 1;
+  });
+  counts.traffic_incidents = (status_?.incidents||[]).length;
+  $("filterbar").innerHTML = FILTERS.map(f=>
+    `<button class="fbtn ${filterOn[f]?"on":""}" onclick="toggleFilter('${f}')"
+      title="Show/hide ${f.replace(/_/g,' ')} in queue and map">
+      ${FILTER_LABELS[f]}${counts[f]?` ${counts[f]}`:""}</button>`).join("");
+}
+
+function locateMe(){
+  if(!navigator.geolocation){ toast("Geolocation not available."); return; }
+  toast("Locating…");
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const ll = [pos.coords.latitude, pos.coords.longitude];
+    if(myLocMarker) map.removeLayer(myLocMarker);
+    myLocMarker = L.circleMarker(ll, {radius:8, color:"#4da3ff", weight:3,
+      fillColor:"#4da3ff", fillOpacity:.4}).addTo(map)
+      .bindTooltip("You are here");
+    map.setView(ll, 15);
+  }, err=>toast("Location failed: "+err.message), {timeout:10000});
+}
+window.locateMe = locateMe;
+
+function focusEmergency(id){
+  const m = emMarkers[id];
+  if(!m){ toast("Not on map (filtered out or expired)."); return; }
+  if(!layerOn.em) toggleLayer("em");
+  map.setView(m.getLatLng(), 15);
+  m.openPopup();
+}
+window.focusEmergency = focusEmergency;
+
+function focusIntersection(iid){
+  const m = interMarkers[iid];
+  if(!m){ toast("Intersection not on map."); return; }
+  map.setView(m.getLatLng(), 15);
+  m.openPopup();
+}
+window.focusIntersection = focusIntersection;
+
+/* ---------- browser notifications for traffic-impacting 911 (Phase 6) -- */
+let notifyOn = sessionStorage.getItem("nexus_notify") === "1";
+const notifiedIds = new Set();   // dedupe by dispatch id
+let notifPrimed = false;         // skip the backlog on first fetch
+
+function renderNotifToggle(){
+  const el = $("lyr_notif");
+  if(!el) return;
+  el.classList.toggle("off", !notifyOn);
+  el.querySelector(".tg").textContent = notifyOn ? "☑" : "☐";
+}
+async function toggleNotifications(){
+  if(!("Notification" in window)){
+    toast("This browser does not support notifications."); return;
+  }
+  if(!notifyOn){
+    let perm = Notification.permission;
+    if(perm === "default") perm = await Notification.requestPermission();
+    if(perm !== "granted"){
+      toast("Notification permission denied — enable it in browser settings.");
+      return;
+    }
+    notifyOn = true;
+    // Don't notify the existing backlog — only NEW dispatches from now on.
+    emergencies.forEach(e=>notifiedIds.add(e.id));
+    notifPrimed = true;
+    toast("🔔 Notifications ON — new traffic-impacting 911 dispatches will alert.");
+  } else {
+    notifyOn = false;
+    toast("Notifications off.");
+  }
+  sessionStorage.setItem("nexus_notify", notifyOn ? "1" : "0");
+  renderNotifToggle();
+}
+window.toggleNotifications = toggleNotifications;
+
+function notifyNewDispatches(){
+  if(!notifyOn || Notification.permission !== "granted") return;
+  if(!notifPrimed){
+    // first fetch after reload with notify pre-enabled: prime, don't spam
+    emergencies.forEach(e=>notifiedIds.add(e.id));
+    notifPrimed = true;
+    return;
+  }
+  emergencies.filter(e=>e.traffic_impacting && !notifiedIds.has(e.id))
+    .slice(0, 3)   // at most 3 toasts per cycle
+    .forEach(e=>{
+      notifiedIds.add(e.id);
+      try{
+        const n = new Notification(`🚨 ${e.type} — traffic impact`, {
+          body: `${e.address} · SFD Real-Time 911 · ${fmtAgo(e.at)}`,
+          tag: e.id,
+        });
+        n.onclick = ()=>{ window.focus(); focusEmergency(e.id); n.close(); };
+      }catch(err){ /* notification constructor can throw on some platforms */ }
+    });
+  emergencies.forEach(e=>notifiedIds.add(e.id));
+}
+
+let emLastFetch = 0;
+async function fetchEmergencies(){
+  if(Date.now() - emLastFetch < 60000) return;   // 60s cadence
+  emLastFetch = Date.now();
+  try{
+    const r = await api("/api/emergencies?age=3600");
+    if(!r.available) return;
+    emergencies = r.emergencies || [];
+    hazards = r.hazards || [];
+    notifyNewDispatches();
+    renderEmergencies(); renderFilterBar(); renderIncidents();
+  }catch(e){ /* feed degraded — chips show health */ }
+}
+
+function renderEmergencies(){
+  if(!map) return;
+  const visible = emergencies.filter(
+    e=>filterOn[emFilterKey(e.category)] ?? true);
+  const cnt = $("emcount");
+  if(cnt) cnt.textContent = `911 ×${visible.length}`;
+  const seen = new Set();
+  visible.forEach(e=>{
+    seen.add(e.id);
+    if(emMarkers[e.id]) return;
+    const color = EM_COLORS[e.category] || EM_COLORS.other;
+    const m = L.circleMarker([e.lat, e.lon], {
+      radius: e.traffic_impacting ? 7 : 5,
+      color, weight: 2, fillColor: color, fillOpacity: .35,
+      dashArray: "3,3",
+    }).addTo(emLayer);
+    const ago = fmtAgo(e.at);
+    m.bindTooltip(`${EM_ICONS[e.category]||"📟"} ${e.type} · ${ago}`);
+    m.bindPopup(`<b>${EM_ICONS[e.category]||"📟"} ${e.type}</b><br>
+      <span style="color:#8fa3c2">${e.address} · dispatched ${ago}<br>
+      SFD Real-Time 911 · ${e.traffic_impacting?"⚠ likely traffic impact":"no expected traffic impact"}</span>`);
+    emMarkers[e.id] = m;
+  });
+  for(const id of Object.keys(emMarkers)){
+    if(!seen.has(id)){ emLayer.removeLayer(emMarkers[id]); delete emMarkers[id]; }
+  }
+}
+
+function popupHtml(inter){
+  const cams = camByIntersection[inter.id] || [];
+  const liveCam = cams.find(c=>c.live);
+  let html = `<b>${inter.name}</b><br>
+    <span style="color:#8fa3c2">${inter.id} · congestion ${(inter.congestion*100).toFixed(0)}%`
+    + (inter.ems_corridor ? " · EMS corridor" : "") + `</span><br>`;
+  if(liveCam){
+    const box = "camb_"+liveCam.id;
+    html += `<div id="${box}">
+      <img class="popimg" alt="Live camera: ${liveCam.live_name||inter.name}">
+      <span class="caminfo" style="color:#8fa3c2;font-size:11px">LIVE ${(liveCam.live_type||'sdot').toUpperCase()} camera · ${liveCam.live_name||""}<br>loading frame…</span><br>
+      <button onclick="busy(this,()=>loadCamFrame('${liveCam.id}','${box}',true))">⟳ Refresh feed</button>
+      <button onclick="busy(this,()=>aiAnalyze('${inter.id}','${box}'))">🤖 AI vision analysis</button>
+      <div class="aiout" style="font-size:11px;color:#8fa3c2;margin-top:4px"></div>
+    </div>`;
+    setTimeout(()=>loadCamFrame(liveCam.id, box, false), 30);
+  }
+  html += `<button class="primary" onclick="busy(this,()=>injectScenario('${inter.id}'))">Inject collision scenario</button>`;
+  return html;
+}
+
+async function aiAnalyze(iid, boxId){
+  const box = document.getElementById(boxId);
+  const out = box ? box.querySelector(".aiout") : null;
+  if(out) out.textContent = "Claude Haiku 4.5 analyzing live frame…";
+  try{
+    const a = await api("/api/incident/analyze", {intersection_id: iid});
+    if(!a.available) throw new Error(a.error||"vision unavailable");
+    const inc = a.incident_visible;
+    if(out) out.innerHTML =
+      `<div class="planchips" style="margin:2px 0 4px">
+        <span class="pchip ${inc?"warn":"good"}">incident: ${inc?"YES":"none"}</span>
+        <span class="pchip">congestion: ${a.congestion_visible}</span>
+        <span class="pchip">visibility: ${a.visibility}</span>
+        <span class="pchip">${Math.round(a.confidence_pct)}% conf</span>
+      </div>${a.assessment}`;
+  }catch(e){ if(out) out.textContent = "Vision analysis failed: "+e.message; }
+}
+window.aiAnalyze = aiAnalyze;
+
+async function loadCamFrame(camId, boxId, force){
+  const box = document.getElementById(boxId);
+  if(!box) return;
+  const img = box.querySelector("img");
+  const info = box.querySelector(".caminfo");
+  const baseLabel = info.innerHTML.split("<br>")[0];
+  info.innerHTML = baseLabel + "<br>" + (force ? "refreshing from source…" : "loading frame…");
+  try{
+    const r = await fetch(`/api/camera?id=${camId}${force?"&refresh=1":""}`,
+      {headers:{"Authorization":"Bearer "+TOKEN}});
+    if(!r.ok) throw new Error("camera unavailable");
+    const capturedAt = parseFloat(r.headers.get("X-Captured-At")||"0");
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    if(img.dataset.blob) URL.revokeObjectURL(img.dataset.blob);
+    img.src = url; img.dataset.blob = url; img.style.display = "";
+    const age = capturedAt ? Math.max(0, Math.round(Date.now()/1000 - capturedAt)) : null;
+    info.innerHTML = baseLabel + "<br>frame fetched " +
+      (capturedAt ? new Date(capturedAt*1000).toLocaleTimeString() : "now") +
+      (age!==null ? ` (${age}s ago)` : "");
+  }catch(e){
+    img.style.display = "none";
+    info.innerHTML = baseLabel + "<br>camera image unavailable";
+  }
+}
+window.loadCamFrame = loadCamFrame;
+
+function renderMap(){
+  if(!grid || !map) return;
+  // index cameras by intersection
+  for(const k in camByIntersection) delete camByIntersection[k];
+  (grid.cameras||[]).forEach(c=>{
+    (camByIntersection[c.intersection_id] ||= []).push(c);
+  });
+  const incidentSet = new Set((status_?.incidents||[]).map(i=>i.intersection_id));
+  const interById = {};
+  grid.intersections.forEach(i=>{ interById[i.id]=i; });
+
+  // Traffic flow lines: colored by live congestion at the segment's
+  // endpoints (worst end wins). Geometry follows the REAL road path when
+  // the server has resolved it (s.path via OSRM, disk-cached); straight
+  // line is only a temporary fallback while paths resolve.
+  (grid.segments||[]).forEach(s=>{
+    const a = interById[s.from], b = interById[s.to];
+    if(!a || !b) return;
+    const cong = Math.max(a.congestion, b.congestion);
+    const color = congestionColor(cong, false);
+    const hasPath = !!(s.path && s.path.length > 1);
+    let line = segLines[s.id];
+    if(line && hasPath && !line._hasPath){
+      // Real road geometry just resolved — replace the straight line.
+      segLayer.removeLayer(line); line = null; delete segLines[s.id];
+    }
+    if(!line){
+      const coords = hasPath ? s.path : [[a.lat, a.lon], [b.lat, b.lon]];
+      line = L.polyline(coords, {color, weight: 4, opacity: .7})
+              .addTo(segLayer);
+      line.bindTooltip(()=>{
+        const d = line._sdata || {};
+        return `${d.name||""} · congestion ${Math.round((d.cong||0)*100)}%`;
+      }, {sticky:true});
+      line._hasPath = hasPath;
+      segLines[s.id] = line;
+    } else {
+      line.setStyle({color});
+    }
+    line._sdata = {name: s.name, cong};
+  });
+
+  if(!mapFitted && grid.intersections.length){
+    mapFitted = true;
+    map.fitBounds(L.latLngBounds(
+      grid.intersections.map(i=>[i.lat, i.lon])).pad(0.05));
+  }
+
+  grid.intersections.forEach(i=>{
+    const hasInc = incidentSet.has(i.id);
+    const color = congestionColor(i.congestion, hasInc);
+    const radius = hasInc ? 11 : 7;
+    let m = interMarkers[i.id];
+    if(!m){
+      m = L.circleMarker([i.lat, i.lon], {
+        radius, color, weight: 2.5, fillColor: color, fillOpacity: .55,
+      }).addTo(interLayer);
+      m.bindPopup(()=>popupHtml(interById[i.id]||i), {maxWidth:310});
+      m.bindTooltip(i.name, {direction:"top", offset:[0,-8]});
+      interMarkers[i.id] = m;
+    } else {
+      m.setStyle({color, fillColor:color});
+      m.setRadius(radius);
+    }
+  });
+
+  const seen = new Set();
+  (grid.vehicles||[]).forEach(v=>{
+    seen.add(v.id);
+    let m = vehMarkers[v.id];
+    if(!m){
+      m = L.circleMarker([v.lat, v.lon], {
+        radius: 3.5, color:"#62d0ff", weight:1, fillColor:"#62d0ff",
+        fillOpacity:.9,
+      }).addTo(vehLayer);
+      m.bindTooltip((layer)=>{
+        const d = layer._vdata || {};
+        const ago = d.last_update ? Math.max(0, Math.round(Date.now()/1000 - d.last_update)) : null;
+        return `${d.id||"?"} · ${d.route||"KC Metro"} · ${d.speed_mph??"?"} mph` +
+               (ago!==null ? ` · fix ${ago}s ago` : "");
+      });
+      vehMarkers[v.id] = m;
+    } else {
+      m.setLatLng([v.lat, v.lon]);
+    }
+    m._vdata = v;
+  });
+  // remove vehicles that disappeared
+  for(const vid of Object.keys(vehMarkers)){
+    if(!seen.has(vid)){ vehLayer.removeLayer(vehMarkers[vid]); delete vehMarkers[vid]; }
+  }
+}
+
+async function injectScenario(iid){
+  try{
+    await api("/api/scenario", {intersection_id: iid, anomaly:"collision"});
+    toast(`Collision scenario injected — anomaly detection firing…`);
+    map.closePopup();
+    await refresh();
+  }catch(e){ toast("Error: "+e.message); }
+}
+window.injectScenario = injectScenario;
+
+async function injectDemo(){
+  // pick a live-camera intersection near the city center (well-connected)
+  const liveIids = new Set((grid?.cameras||[]).filter(c=>c.live)
+                           .map(c=>c.intersection_id));
+  const candidates = (grid?.intersections||[]).filter(i=>
+    liveIids.has(i.id) && Math.abs(i.lat-47.61)<0.03 && Math.abs(i.lon+122.33)<0.03);
+  const pick = candidates[Math.floor(Math.random()*candidates.length)]
+            || (grid?.intersections||[])[0];
+  if(!pick){ toast("Grid not loaded yet."); return; }
+  await injectScenario(pick.id);
+  const m = interMarkers[pick.id];
+  if(m) map.setView(m.getLatLng(), 15);
+}
+window.injectDemo = injectDemo;
+
+// Cache vision results per incident so SSE re-renders don't wipe them.
+const visionCache = {};   // incident_id -> html
+function visionHtml(a){
+  return `<div class="planchips" style="margin:3px 0">
+      <span class="pchip ${a.incident_visible?"warn":"good"}">visual incident: ${a.incident_visible?"CONFIRMED":"not visible"}</span>
+      <span class="pchip">congestion: ${a.congestion_visible}</span>
+      <span class="pchip">${Math.round(a.confidence_pct)}% conf</span>
+    </div>${a.assessment}`;
+}
+async function aiVerifyIncident(iid, incId){
+  const outId = "aiv_" + incId;
+  visionCache[incId] = "Claude Haiku 4.5 verifying live frame…";
+  if($(outId)) $(outId).innerHTML = visionCache[incId];
+  try{
+    const a = await api("/api/incident/analyze", {intersection_id: iid});
+    if(!a.available) throw new Error(a.error||"vision unavailable");
+    visionCache[incId] = visionHtml(a);
+  }catch(e){ visionCache[incId] = "AI verify failed: "+e.message; }
+  if($(outId)) $(outId).innerHTML = visionCache[incId];
+}
+window.aiVerifyIncident = aiVerifyIncident;
+
+function fmtTime(ts){ return new Date(ts*1000).toLocaleTimeString(); }
+function fmtAgo(ts){
+  const s = Math.max(0, Math.round(Date.now()/1000 - ts));
+  if(s < 60) return `${s}s ago`;
+  if(s < 3600) return `${Math.floor(s/60)}m ${s%60}s ago`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ago`;
+}
+function sevColor(s){ return s>0.7 ? "var(--bad)" : s>0.4 ? "var(--warn)" : "var(--good)"; }
+
+function renderIncidents(){
+  const wrap = $("incidents");
+  const incidents = filterOn.traffic_incidents ? (status_?.incidents||[]) : [];
+  const plans = status_?.plans || [];
+  const emVisible = emergencies.filter(
+    e=>filterOn[emFilterKey(e.category)] ?? true);
+  if(!incidents.length && !emVisible.length){
+    wrap.innerHTML = `<p class="meta">No events match the current filters.</p>
+      <p class="meta" style="margin-top:6px">Click any intersection on the map to view
+      its live camera, run AI vision analysis, or inject a scenario. Or:</p>
+      <button class="primary" style="margin-top:8px" onclick="busy(this, injectDemo)">
+        ⚡ Inject demo collision (random downtown intersection)</button>`;
+    return;
+  }
+  let html = "";
+  incidents.forEach(inc=>{
+    const plansFor = plans.filter(p=>p.incident_id===inc.id);
+    const latest = plansFor[0];
+    const name = interName(inc.intersection_id);
+    const cams = camByIntersection[inc.intersection_id] || [];
+    const liveCam = cams.find(c=>c.live);
+    const sc = sevColor(inc.severity);
+    const aiChip = inc.detection_source === "ai_vision"
+      ? `<span class="pchip warn" title="Detected autonomously by the AI vision sweep (Claude Haiku on live camera frames)">👁 AI-detected</span>` : "";
+    html += `<div class="card" style="border-left:3px solid ${sc}">
+      <h3 style="display:flex;align-items:center;gap:6px">
+        ⚠ ${inc.type.replace(/_/g," ").toUpperCase()}${aiChip}
+        <span class="state" style="margin-left:auto">${inc.state}</span></h3>
+      <div style="font-size:13px;color:var(--text);cursor:pointer"
+        title="Show on map" onclick="focusIntersection('${inc.intersection_id}')">📍 ${name}</div>
+      <div class="sevwrap">
+        <span class="meta">severity</span>
+        <span class="sevbar"><i style="width:${(inc.severity*100).toFixed(0)}%;background:${sc}"></i></span>
+        <span class="meta" style="color:${sc};font-weight:700">${(inc.severity*100).toFixed(0)}%</span>
+        <span class="meta" style="margin-left:auto" title="${fmtTime(inc.detected_at)}">detected ${fmtAgo(inc.detected_at)}</span>
+      </div>
+      <details class="why"><summary>Detection detail</summary>
+        <div class="whytext">${inc.description}${inc.acknowledged_by?`<br>acknowledged by ${inc.acknowledged_by}`:""}</div></details>
+      ${incidentTimeline(inc)}`;
+    if(liveCam){
+      html += `<img class="camthumb" src="/api/camera?id=${liveCam.id}&token=${encodeURIComponent(TOKEN)}&t=${Math.floor(Date.now()/30000)}"
+        alt="Live camera at ${name}" title="Click to expand"
+        onclick="this.classList.toggle('expanded')"
+        onerror="this.style.display='none'">
+        <div class="row" style="gap:0">
+          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))">👁 AI verify camera</button>
+        </div>
+        <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
+    }
+    if(inc.state==="detected"){
+      html += `<button class="primary" onclick="busy(this,()=>ack('${inc.id}'))">Acknowledge <span style="opacity:.55">Ctrl+Shift+K</span></button>`;
+    } else if(!latest || ["rejected","reverted"].includes(latest.status)){
+      html += `<button class="primary" onclick="busy(this,()=>recommend('${inc.id}'))">Request AI Recommendation</button>`;
+    }
+    if(latest){ html += renderPlan(latest, inc); }
+    if(["monitoring","mitigating","acknowledged"].includes(inc.state)){
+      html += `<button onclick="busy(this,()=>resolveInc('${inc.id}'))">Close Incident</button>`;
+    }
+    html += `</div>`;
+  });
+  // 911 events (Citizen-style) appear below platform incidents, compact,
+  // click-to-locate on the map. Traffic-impacting calls first.
+  if(emVisible.length){
+    html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
+      letter-spacing:.5px">911 dispatches · last hour · SFD live</div>`;
+    const sorted = [...emVisible].sort((a,b)=>
+      (b.traffic_impacting - a.traffic_impacting) || (b.at - a.at));
+    sorted.slice(0, 25).forEach(e=>{
+      const color = EM_COLORS[e.category] || EM_COLORS.other;
+      html += `<div class="card emcard" style="border-left:3px solid ${color};padding:6px 10px"
+        onclick="focusEmergency('${e.id}')" title="Show on map">
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+          <span>${EM_ICONS[e.category]||"📟"}</span>
+          <b>${e.type}</b>
+          ${e.traffic_impacting?'<span class="pchip warn">traffic impact</span>':""}
+          <span class="meta" style="margin-left:auto" title="${fmtTime(e.at)}">${fmtAgo(e.at)}</span>
+        </div>
+        <div class="meta">📍 ${e.address}</div>
+      </div>`;
+    });
+  }
+  wrap.innerHTML = html;
+}
+
+function interName(iid){
+  return (grid?.intersections||[]).find(x=>x.id===iid)?.name || iid;
+}
+
+/* ---------- incident timeline from the audit trail (Phase 6) ---------- */
+function incidentTimeline(inc){
+  // Audit entries tied to this incident: explicit incident_id in
+  // after_state, or actions targeting its intersection after detection.
+  const related = (auditEntries||[]).filter(e=>{
+    if(e.after_state && e.after_state.incident_id === inc.id) return true;
+    return (e.targets||[]).includes(inc.intersection_id)
+      && e.timestamp >= inc.detected_at - 1;
+  });
+  // Merge in the incident's own action history for operator steps.
+  const events = related.map(e=>({
+    at: e.timestamp,
+    actor: e.actor,
+    label: e.action.replace(/_/g, " "),
+    icon: AUDIT_ICON[e.action] || "·",
+    outcome: e.outcome,
+  }));
+  (inc.action_history||[]).forEach(h=>{
+    events.push({at: h.at, actor: h.actor, label: h.action, icon: "·"});
+  });
+  if(!events.length) return "";
+  // de-dupe by (rounded ts + label) and sort chronologically
+  const seen = new Set(); const uniq = [];
+  events.sort((a,b)=>a.at-b.at).forEach(ev=>{
+    const k = Math.round(ev.at) + "|" + ev.label;
+    if(seen.has(k)) return;
+    seen.add(k); uniq.push(ev);
+  });
+  return `<details class="why"><summary>Timeline (${uniq.length} events — hash-chained audit)</summary>
+    <div class="whytext">` + uniq.map(ev=>
+      `<div style="display:flex;gap:6px;padding:1px 0">
+        <span>${ev.icon}</span>
+        <span><b style="color:var(--text)">${ev.label}</b> · ${ev.actor}
+          ${ev.outcome && ev.outcome!=="ok" ? ` · <span style="color:var(--bad)">${ev.outcome}</span>` : ""}</span>
+        <span style="margin-left:auto;white-space:nowrap" title="${fmtTime(ev.at)}">${fmtAgo(ev.at)}</span>
+      </div>`).join("") + `</div></details>`;
+}
+
+function renderPlan(p, inc){
+  const isLLM = (p.model_version||"").includes("sonnet");
+  let html = `<div style="border-top:1px dashed var(--line); margin-top:6px; padding-top:6px;">
+    <div class="meta"><b style="color:var(--text)">AI Recommendation</b>
+      · confidence <span class="conf">${p.confidence_score}%</span>
+      · <span title="${p.plan_id} · ${p.model_version}">${isLLM?"Claude Sonnet 4.5":"expert system"}</span></div>`;
+  if(["blocked_constraint","blocked_hallucination","suppressed_provenance","withheld_confidence"].includes(p.status)){
+    html += `<div class="blocked">⛔ ${p.status.replace(/_/g," ")}: ${p.block_reason||""}</div></div>`;
+    return html;
+  }
+  // structured action rows: what will actually change (click = show on map)
+  if((p.operations||[]).length){
+    p.operations.forEach(op=>{
+      const verb = op.type==="extend_green" ? "+" : "−";
+      html += `<div class="oprow" style="cursor:pointer" title="Show on map"
+        onclick="focusIntersection('${op.intersection_id}')">
+        <span class="opdelta">${verb}${Math.round(op.delta_seconds)}s</span>
+        <span class="opname">📍 ${interName(op.intersection_id)}</span>
+        <span class="opphase">green · phase ${op.phase_id}</span>
+      </div>`;
+    });
+  } else {
+    html += `<div class="oprow"><span class="opname">No signal changes — monitoring recommended</span></div>`;
+  }
+  // rationale tucked behind a toggle
+  html += `<details class="why"><summary>Why this recommendation</summary>
+    <div class="whytext">${p.justification}</div></details>`;
+  // compact outcome chips
+  let chips = "";
+  if(p.simulation){
+    const s = p.simulation;
+    chips += `<span class="pchip good">dry-run: ${s.summary.intersections_improved}↑ improve</span>`;
+    if(s.summary.intersections_worsened>0)
+      chips += `<span class="pchip warn">${s.summary.intersections_worsened}↓ worsen</span>`;
+    chips += `<span class="pchip">clear ~${s.projected_clear_minutes} min</span>`;
+    if(s.transit_routes_affected.length)
+      chips += `<span class="pchip warn">${s.transit_routes_affected.length} transit routes</span>`;
+  }
+  chips += `<span class="pchip">${p.provenance.data_sources.length} data sources</span>
+            <span class="pchip">weather: ${p.provenance.weather?.condition||"?"}</span>`;
+  html += `<div class="planchips">${chips}</div>`;
+  if(p.status==="pending_approval"){
+    html += `<button class="primary" onclick="busy(this,()=>approve('${p.plan_id}'))">✓ Approve <span style="opacity:.55">Ctrl+Enter</span></button>
+             <button onclick="busy(this,()=>reject('${p.plan_id}'))">✕ Reject <span style="opacity:.55">Ctrl+Bksp</span></button>`;
+  } else if(p.status==="shadow_logged"){
+    html += `<div class="meta" style="color:var(--good)">✔ Approved — <b>SHADOW MODE: logged, not executed</b></div>`;
+  } else if(p.status==="advisory_issued"){
+    html += `<div class="meta" style="color:var(--warn)">✔ Advisory instruction issued · expires in 15 min</div>
+             <button onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Field Instruction</button>`;
+  } else if(p.status==="executed"){
+    html += `<div class="meta" style="color:var(--good)">✔ EXECUTED ${fmtAgo(p.executed_at)} — monitoring for worsening</div>
+             <button class="danger" onclick="busy(this,()=>rollback('${p.plan_id}'))">↩ Revert <span style="opacity:.55">Ctrl+Shift+R</span></button>`;
+  } else if(p.status==="reverted"){
+    html += `<div class="meta">↩ Reverted to previous timing plan</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+async function ack(id){ try{ await api("/api/incident/ack",{incident_id:id});
+  toast("Incident acknowledged."); await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function recommend(id){ try{ const p = await api("/api/recommend",{incident_id:id});
+  toast(p.status==="pending_approval" ? `AI plan ${p.plan_id} ready — confidence ${p.confidence_score}%`
+        : `Plan ${p.status.replace(/_/g," ")}: ${p.block_reason||""}`);
+  await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function approve(id){ try{ const p = await api("/api/plan/approve",{plan_id:id});
+  toast(`Plan ${p.status.replace(/_/g," ").toUpperCase()}`); await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function reject(id){ try{ await api("/api/plan/reject",{plan_id:id,reason:"operator judgment"});
+  toast("Plan rejected."); await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function rollback(id){ try{ await api("/api/plan/rollback",{plan_id:id});
+  toast("Reverted to previous timing plan."); await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function resolveInc(id){ try{ await api("/api/incident/resolve",
+  {incident_id:id,resolution:"Resolved",notes:"cleared from TOC"});
+  toast("Incident resolved."); await refresh(); }catch(e){toast("Error: "+e.message);} }
+async function showInstruction(id){
+  try{ const ins = await api("/api/plan/instruction?id="+id);
+    $("modaltitle").textContent =
+      `Field Instruction · ${ins.priority} priority` +
+      (ins.expired ? " · EXPIRED" : "");
+    $("modalcontent").innerHTML =
+      ins.instructions.map(l=>`<div class="instr"><b>${l.intersection}</b><br>
+        current: cycle ${l.current_timing.cycle_seconds}s, green ${l.current_timing.phase_green_seconds}s<br>
+        <span class="chg">→ ${l.requested_change}</span></div>`).join("") +
+      `<div class="meta" style="margin-bottom:10px">${ins.confirmation_protocol}</div>`;
+    $("modal").style.display = "flex";
+  }catch(e){toast("Error: "+e.message);} }
+window.ack=ack; window.recommend=recommend; window.approve=approve;
+window.reject=reject; window.rollback=rollback; window.resolveInc=resolveInc;
+window.showInstruction=showInstruction;
+
+function esc(t){ const d=document.createElement("div"); d.textContent=t; return d.innerHTML; }
+
+// Scan an AI answer for known locations (intersection names + 911 addresses)
+// and return "show on map" chips for each match.
+function locChipsFor(text){
+  const lower = text.toLowerCase();
+  const chips = [];
+  const seen = new Set();
+  (grid?.intersections||[]).forEach(i=>{
+    if(i.name.length > 6 && lower.includes(i.name.toLowerCase())
+       && !seen.has(i.id)){
+      seen.add(i.id);
+      chips.push(`<button class="locbtn"
+        onclick="focusIntersection('${i.id}')">📍 ${esc(i.name)}</button>`);
+    }
+  });
+  (emergencies||[]).forEach(e=>{
+    if(e.address && e.address.length > 6
+       && lower.includes(e.address.toLowerCase()) && !seen.has(e.id)){
+      seen.add(e.id);
+      chips.push(`<button class="locbtn"
+        onclick="focusEmergency('${e.id}')">📍 ${esc(e.address)}</button>`);
+    }
+  });
+  return chips.length
+    ? `<div class="locrow">${chips.slice(0,8).join("")}</div>` : "";
+}
+
+async function askCopilot(){
+  const inp = $("chatin"); const q = inp.value.trim();
+  if(!q) return;
+  inp.value = "";
+  const log = $("chatlog");
+  log.innerHTML += `<div class="chatmsg you"><span class="who">you</span>${esc(q)}</div>
+    <div class="chatmsg bot" id="chatpending"><span class="who">copilot</span><span style="color:var(--dim)">thinking…</span></div>`;
+  log.scrollTop = log.scrollHeight;
+  try{
+    const r = await api("/api/copilot/query", {text:q});
+    document.getElementById("chatpending").innerHTML =
+      `<span class="who">copilot</span>${esc(r.answer)}${locChipsFor(r.answer)}`;
+    document.getElementById("chatpending").removeAttribute("id");
+  }catch(e){
+    document.getElementById("chatpending").innerHTML =
+      `<span class="who">copilot</span><span style="color:var(--bad)">${esc(e.message)}</span>`;
+    document.getElementById("chatpending").removeAttribute("id");
+  }
+  log.scrollTop = log.scrollHeight;
+}
+window.askCopilot = askCopilot;
+
+/* ---------- tabbed Safety | Analytics panel (Phase 3) ---------- */
+let panelTab = "safety";
+let analyticsData = null, analyticsLastFetch = 0;
+function setPanelTab(tab){
+  panelTab = tab;
+  $("tab_safety").classList.toggle("on", tab==="safety");
+  $("tab_analytics").classList.toggle("on", tab==="analytics");
+  $("safety").style.display = tab==="safety" ? "" : "none";
+  $("analytics").style.display = tab==="analytics" ? "" : "none";
+  if(tab==="analytics"){ analyticsLastFetch = 0; fetchAnalytics(); }
+}
+window.setPanelTab = setPanelTab;
+
+async function fetchAnalytics(){
+  if(Date.now() - analyticsLastFetch < 60000) return;   // 60s cadence
+  analyticsLastFetch = Date.now();
+  try{
+    analyticsData = await api("/api/analytics?hours=24");
+    renderAnalytics();
+  }catch(e){ /* tolerated */ }
+}
+
+function congBarColor(v){
+  return v>0.7 ? "var(--bad)" : v>0.45 ? "var(--warn)" : "var(--good)";
+}
+
+function renderAnalytics(){
+  const a = analyticsData;
+  const el = $("analytics");
+  if(!a){ el.innerHTML = `<p class="meta">Loading analytics…</p>`; return; }
+  if(!a.total_samples && !Object.keys(a.incident_counts||{}).length){
+    el.innerHTML = `<p class="meta">No history yet — the platform records
+      congestion samples every minute while running. Check back shortly.</p>`;
+    return;
+  }
+  let html = `<div class="meta" style="margin-bottom:2px">
+    Citywide congestion — last ${Math.round(a.window_hours)}h
+    · ${a.total_samples} samples</div>`;
+  const hours = a.congestion_by_hour || [];
+  if(hours.length){
+    html += `<div class="hourbars">` + hours.map(h=>
+      `<span class="hb" title="${h.hour} · avg ${(h.avg*100).toFixed(0)}% · max ${(h.max*100).toFixed(0)}% · ${h.samples} samples"
+        style="height:${Math.max(6, h.avg*100)}%;background:${congBarColor(h.avg)}"></span>`
+      ).join("") + `</div>
+      <div class="meta" style="display:flex;justify-content:space-between">
+        <span>${hours[0].hour.slice(11)}</span>
+        <span>avg congestion by hour</span>
+        <span>${hours[hours.length-1].hour.slice(11)}</span></div>`;
+  }
+  const hot = (a.hotspots||[]).slice(0,5);
+  if(hot.length){
+    html += `<div class="meta" style="margin-top:7px;text-transform:uppercase;
+      letter-spacing:.5px">Top hotspots (click to locate)</div>`;
+    hot.forEach(h=>{
+      html += `<div class="hotrow" onclick="focusIntersection('${h.intersection_id}')"
+        title="avg ${(h.avg*100).toFixed(0)}% over ${h.samples} samples">
+        <span class="hotbar"><i style="width:${(h.avg*100).toFixed(0)}%;background:${congBarColor(h.avg)}"></i></span>
+        <b style="color:${congBarColor(h.avg)}">${(h.avg*100).toFixed(0)}%</b>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📍 ${h.name}</span>
+      </div>`;
+    });
+  }
+  const po = a.plan_outcomes || {};
+  const ic = a.incident_counts || {};
+  html += `<div class="planchips" style="margin-top:7px">
+    <span class="pchip good">✓ ${po.approved||0} approved</span>
+    <span class="pchip">✕ ${po.rejected||0} rejected</span>
+    <span class="pchip warn">⛔ ${po.blocked||0} blocked</span>
+    <span class="pchip">↩ ${po.reverted||0} reverted</span>
+    ${Object.entries(ic).map(([t,n])=>`<span class="pchip">⚠ ${n} ${t.replace(/_/g," ")}</span>`).join("")}
+    ${a.vision_sweep?.incidents_confirmed?`<span class="pchip warn">👁 ${a.vision_sweep.incidents_confirmed} AI-detected</span>`:""}
+  </div>`;
+  el.innerHTML = html;
+}
+
+let visionStats = null, visionLastFetch = 0;
+async function fetchVisionStatus(){
+  if(Date.now() - visionLastFetch < 30000) return;   // 30s cadence
+  visionLastFetch = Date.now();
+  try{ visionStats = await api("/api/vision/status"); renderSafety(); }
+  catch(e){ /* tolerated */ }
+}
+function visionLine(){
+  const v = visionStats;
+  if(!v) return "";
+  const state = !v.enabled ? "disabled"
+    : v.running ? "running" : "starting";
+  const color = v.enabled && v.running ? "var(--good)" : "var(--dim)";
+  return `<div class="meta" style="margin-top:7px" title="Background AI vision sweep: Claude Haiku analyzes live camera frames every ${Math.round(v.interval_s||120)}s">
+    👁 AI vision sweep: <b style="color:${color}">${state}</b>
+    · ${v.frames_analyzed||0} frames · ${v.incidents_raised||0} detections
+    ${v.degraded?` · <span style="color:var(--warn)">degraded</span>`:""}</div>`;
+}
+function kpiColor(v, warnAt, badAt){
+  return v>=badAt ? "var(--bad)" : v>=warnAt ? "var(--warn)" : "var(--good)";
+}
+function renderSafety(){
+  const m = status_?.safety_metrics; if(!m) return;
+  const combined = m.combined_block_rate_pct;
+  const activeN = Object.keys(status_.active_changes||{}).length;
+  const isAdmin = SESSION?.role === "admin";
+  $("safety").innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><b>${m.generated}</b><span>plans</span></div>
+      <div class="kpi"><b style="color:${kpiColor(m.hallucination_block_rate_pct,0.5,1)}">${m.hallucination_block_rate_pct}%</b><span>halluc. blocks</span></div>
+      <div class="kpi"><b style="color:${kpiColor(m.constraint_block_rate_pct,0.5,1)}">${m.constraint_block_rate_pct}%</b><span>MUTCD blocks</span></div>
+      <div class="kpi"><b style="color:${kpiColor(combined,1,2)}">${combined}%</b><span>combined &lt;2%</span></div>
+      <div class="kpi"><b style="color:${kpiColor(activeN,4,5)}">${activeN}/5</b><span>live changes</span></div>
+      <div class="kpi"><b style="color:${status_.dlq_count>0?'var(--warn)':'var(--accent)'}">${status_.dlq_count}</b><span>DLQ</span></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="meta">Mode${isAdmin?"":" (admin only)"}:</span>
+      <span class="seg" role="group" aria-label="Operating mode">
+        ${["shadow","advisory","live"].map(md=>
+          `<button class="${status_.mode===md?"on":""}"
+            ${isAdmin?`onclick="busy(this,()=>setMode('${md}'))"`:"disabled"}>${md}</button>`).join("")}
+      </span>
+      <span class="meta" style="margin-left:auto">conf. threshold <b style="color:var(--accent)">${status_.confidence_threshold}%</b></span>
+    </div>` + visionLine();
+}
+async function setMode(md){
+  try{ await api("/api/mode",{mode:md});
+    toast("Mode set to "+md.toUpperCase()+" (admin-authorized, audit-logged)");
+    await refresh(); }catch(e){toast("Error: "+e.message);} }
+window.setMode=setMode;
+
+function renderAlerts(){
+  const alerts = (status_?.alerts||[]).slice().reverse().slice(0,12);
+  let html = "";
+  // NWS hazard alerts pinned at the top (911 events live in the queue).
+  (hazards||[]).forEach(h=>{
+    html += `<div class="alert critical"><b>⚠ NWS: ${h.event}</b>
+      · ${h.severity}<br>${h.headline}</div>`;
+  });
+  html += alerts.map(a=>`<div class="alert ${a.priority}">
+        <b>${a.kind.replace(/_/g," ")}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${a.message}</div>`).join("");
+  $("alerts").innerHTML = html;
+}
+
+const AUDIT_ICON = {login:"→", login_failed:"⛔", logout:"←",
+  permission_denied:"⛔", mode_transition:"⚙", incident_detected:"⚠",
+  incident_acknowledged:"✋", incident_resolved:"✔",
+  recommendation_generated:"🤖", plan_approved:"✓", plan_rejected:"✕",
+  shadow_logged:"◌", advisory_issued:"📋", signal_change_executed:"⚡",
+  rollback_executed:"↩", vision_analysis:"👁", vision_detection:"👁",
+  platform_start:"●", city_bootstrapped:"●", auto_revert_proposed:"⚠"};
+let auditEntries = [];   // cached for incident timelines
+async function renderAudit(){
+  try{
+    const a = await api("/api/audit");
+    auditEntries = a.entries || [];
+    $("chainstate").innerHTML = a.chain_intact
+      ? `<span style="color:var(--good)">✓ chain intact · ${a.total}</span>`
+      : `<span style="color:var(--bad)">✕ CHAIN BROKEN</span>`;
+    $("audit").innerHTML = a.entries.slice(-30).reverse().map(e=>
+      `<div class="audit-entry">${AUDIT_ICON[e.action]||"·"} <b>${e.action.replace(/_/g," ")}</b>
+       <span style="float:right" title="${fmtTime(e.timestamp)}">${fmtAgo(e.timestamp)}</span><br>
+       <span style="opacity:.75">${e.actor}</span>
+       ${e.outcome!=="ok"?` · <b style="color:var(--bad)">${e.outcome}</b>`:""}</div>`).join("");
+  }catch(e){/* panel-level failure tolerated */}
+}
+
+function renderHeader(){
+  $("feedchips").innerHTML = (status_?.feeds||[]).map(f=>
+    `<span class="chip ${f.state}" title="age ${f.age_seconds}s / threshold ${f.threshold_seconds}s">${f.source}</span>`).join("");
+  const badge = $("modebadge");
+  badge.textContent = status_.mode.toUpperCase();
+  badge.className = "modebadge mode-"+status_.mode;
+  const db = $("databadge");
+  if(grid?.live_data){
+    db.textContent = "● LIVE DATA — SDOT/WSDOT cams · KC Metro · NWS";
+    db.className = "databadge data-live";
+  } else {
+    db.textContent = "offline simulation";
+    db.className = "databadge data-sim";
+  }
+  if(grid?.city){
+    const cityLabel = grid.city.toUpperCase();
+    const cn = $("cityname");
+    if(cn.textContent !== cityLabel){
+      cn.textContent = cityLabel;
+      cn.title = "Launch another city: python platform/run.py --city seattle|tacoma";
+      const lg = document.querySelector("#mappanel h2");
+      if(lg) lg.firstChild.textContent = "Live Grid — " +
+        cityLabel.charAt(0) + cityLabel.slice(1).toLowerCase() + " ";
+    }
+  }
+  const cs = $("congsrc");
+  if(grid?.congestion_source){
+    cs.style.display = "";
+    cs.textContent = "congestion: " + grid.congestion_source;
+    cs.className = "databadge " +
+      (grid.congestion_source.startsWith("live") ? "data-live" : "data-sim");
+  } else { cs.style.display = "none"; }
+  const w = grid?.weather;
+  $("weatherline").textContent = w
+    ? `NWS: ${w.condition}, ${Math.round(w.temperature_f)}°F`
+    : "";
+  if(grid?.live_data){
+    const rg = grid.road_geometry || {};
+    $("coverageline").textContent =
+      `${grid.intersections.length} camera intersections citywide · `+
+      `${(grid.vehicles||[]).length} live buses · `+
+      `${rg.cached||0}/${(grid.segments||[]).length} road paths resolved`;
+  }
+}
+
+async function refresh(){
+  try{
+    [status_, grid] = await Promise.all([api("/api/status"), api("/api/grid")]);
+    renderHeader(); renderMap(); renderIncidents(); renderSafety();
+    renderAlerts(); renderAudit(); renderFilterBar();
+    fetchEmergencies();   // 60s-throttled internally
+    fetchVisionStatus();  // 30s-throttled internally
+    if(panelTab==="analytics") fetchAnalytics();   // 60s-throttled
+  }catch(e){ /* transient */ }
+}
+
+/* Keyboard shortcuts per PRD §9.3 (no Ctrl+Z / Ctrl+A overloading) */
+document.addEventListener("keydown", e=>{
+  if(!e.ctrlKey) return;
+  const firstPending = (status_?.plans||[]).find(p=>p.status==="pending_approval");
+  const firstExecuted = (status_?.plans||[]).find(p=>p.status==="executed");
+  const firstDetected = (status_?.incidents||[]).find(i=>i.state==="detected");
+  if(e.key==="Enter" && firstPending){ e.preventDefault(); approve(firstPending.plan_id); }
+  else if(e.key==="Backspace" && firstPending){ e.preventDefault(); reject(firstPending.plan_id); }
+  else if(e.shiftKey && (e.key==="R"||e.key==="r") && firstExecuted){
+    e.preventDefault(); rollback(firstExecuted.plan_id); }
+  else if(e.shiftKey && (e.key==="K"||e.key==="k") && firstDetected){
+    e.preventDefault(); ack(firstDetected.id); }
+});
+
+initMap();
+renderUser();
+renderNotifToggle();
+if(TOKEN){ hideLogin(); connectEvents(); refresh(); }
+else { showLogin(); }
+// Fallback poll (slow) in case SSE drops; SSE handles real-time updates.
+setInterval(()=>{ if(TOKEN) refresh(); }, 15000);
+</script>
+</body>
+</html>
