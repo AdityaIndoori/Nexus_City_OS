@@ -46,7 +46,7 @@ hotspots, and incident/plan outcomes from the 7-day SQLite history:
 ## Quick Start (zero install dependencies — Python 3.10+ stdlib only)
 
 ```bash
-# Run the full test suite (114 tests — the safety suite is the trust artifact)
+# Run the full test suite (119 tests — the safety suite is the trust artifact)
 python -m unittest discover -s platform/tests -t platform
 
 # Launch the platform with REAL Seattle data (default)
@@ -113,14 +113,21 @@ the platform never hides a degraded feed (PRD §8).
 The last two simulated pieces are now real:
 
 * **Congestion** (`nexus/congestion.py`): live bus GPS fixes are spatial
-  speed probes. The `CongestionEstimator` buckets fixes to nearby
-  intersections (grid index), requires ≥2 distinct vehicles inside a 180 s
-  freshness window, takes the weighted **median** speed, and scores it
-  against a 25 mph surface / 55 mph highway baseline (WSDOT cams use "@" in
-  names). Optional WSDOT loop-detector flow joins as weight-3 samples when
-  `WSDOT_ACCESS_CODE` is set. The engine **never** lets the edge simulator
-  overwrite a fresh real estimate — but anomalous telemetry always drives
-  congestion so injected scenarios work everywhere.
+  speed probes, **calibrated per the probe-vehicle literature** (Portland
+  State bus-GPS accuracy studies, FHWA Probe Vehicle Techniques handbook):
+  per-vehicle MAX speed in the freshness window guards against stop
+  dwell/decel bias; bus samples are normalized to a bus free-flow speed of
+  `limit × 0.75` (buses never reach the posted limit even in free flow);
+  congestion is the standard normalized position between free flow and a
+  ~3 mph jam crawl. ≥2 distinct sources within 180 s required; weighted
+  median; WSDOT loop-detector flow (free `WSDOT_ACCESS_CODE`) joins as
+  weight-3 samples scored against the raw limit. The engine **never** lets
+  the edge simulator overwrite a fresh real estimate — but anomalous
+  telemetry always drives congestion so injected scenarios work everywhere.
+  *Honest framing:* bus-probe congestion is a free citywide directional
+  signal, not a ground-truth speed map — see `REVIEW_AND_ROADMAP.md` for
+  the layered data strategy (WSDOT loops live, NPMRDS/TomTom/HERE swap
+  points documented).
 * **Incident detection** (`nexus/vision.py`): the `VisionSweep` daemon runs
   real Claude Haiku multimodal analysis on live camera frames (priority:
   congested intersections), publishing redacted telemetry with
@@ -182,10 +189,11 @@ KMS/HSM.
 | `PRD_v2.md` | **Current requirements (v2.1)** — all review issues + consistency pass |
 | `MASTER_PROMPT.md` | Engineering blueprint (v2), aligned with PRD v2.1 |
 | `MARKET_RESEARCH.md` | Market sizing, competitive analysis, failure-mode research, strategy |
+| `REVIEW_AND_ROADMAP.md` | **Critical technical review + business model & roadmap** — what holds up, what was fixed (research-calibrated congestion), pricing/procurement strategy, milestones to revenue |
 | `platform/` | **Reference implementation** |
 | `platform/nexus/` | Platform core (see Architecture below) |
 | `platform/ui/index.html` | Operator Live Grid UI (TOC console) |
-| `platform/tests/` | 114 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed, congestion estimation, vision sweep, analytics, multi-city, E2E |
+| `platform/tests/` | 119 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed, congestion estimation, vision sweep, analytics, multi-city, E2E |
 | `platform/run.py` | Launcher (`--host/--port/--city/--sim/--no-vision`) |
 | `platform/scripts/live_workflow_demo.py` | Scripted end-to-end mission thread |
 | `Dockerfile` / `docker-compose.yml` | Container deployment (python:3.12-slim, no pip installs) |
@@ -334,7 +342,7 @@ engine, edge, adapter = bootstrap(PortlandAdapter())
 python -m unittest discover -s platform/tests -t platform
 ```
 
-114 tests (network-independent): every MUTCD rule, every hallucination check,
+119 tests (network-independent): every MUTCD rule, every hallucination check,
 911-feed parsing (category/traffic-impact mapping, geo/time filtering,
 degradation),
 LLM-output validation (hallucinated-ID and out-of-bound-delta rejection,

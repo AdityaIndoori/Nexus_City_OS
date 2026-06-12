@@ -14,7 +14,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nexus import bootstrap
 from nexus.adapters import SeattleAdapter, default_timing_plan
-from nexus.congestion import CongestionEstimator, speed_limit_estimate
+from nexus.congestion import (
+    BUS_FREEFLOW_FACTOR,
+    CongestionEstimator,
+    ratio_to_congestion,
+    speed_limit_estimate,
+)
 from nexus.graph import CityGraph
 from nexus.models import EdgeTelemetry, Intersection, TransitVehicle, now_ts
 
@@ -46,6 +51,22 @@ class TestSpeedLimitHeuristic(unittest.TestCase):
             self.assertEqual(speed_limit_estimate(name), 55.0, name)
 
 
+class TestRatioMapping(unittest.TestCase):
+    """Research-calibrated speed-ratio → congestion normalization."""
+
+    def test_free_flow_is_zero(self):
+        self.assertEqual(ratio_to_congestion(1.0), 0.0)
+        self.assertEqual(ratio_to_congestion(1.3), 0.0)   # faster than FF
+
+    def test_jam_is_one(self):
+        self.assertEqual(ratio_to_congestion(0.12), 1.0)
+        self.assertEqual(ratio_to_congestion(0.0), 1.0)
+
+    def test_midpoint_linear(self):
+        # halfway between free flow (1.0) and jam (0.12) → 0.5
+        self.assertAlmostEqual(ratio_to_congestion(0.56), 0.5, places=2)
+
+
 class TestCongestionEstimator(unittest.TestCase):
     def setUp(self):
         self.graph = make_graph(
@@ -62,6 +83,30 @@ class TestCongestionEstimator(unittest.TestCase):
         results = self.est.compute()
         self.assertIn("INT-A", results)
         self.assertLessEqual(results["INT-A"], 0.1)
+
+    def test_bus_freeflow_factor_no_phantom_congestion(self):
+        """Buses cruise at ~75% of the limit even in free flow (probe
+        literature). 19 mph on a 25 mph arterial must read FREE FLOW,
+        not ~25% congested (the bias the old 1-speed/limit model had)."""
+        self.est.ingest_vehicles([bus("V1", 47.60, -122.34, 19.0),
+                                  bus("V2", 47.601, -122.341, 19.0)])
+        results = self.est.compute()
+        self.assertLessEqual(results["INT-A"], 0.05)
+
+    def test_dwell_bias_keep_max_per_vehicle(self):
+        """A bus decelerating into a stop (3 mph fix) right after cruising
+        past at 18 mph must NOT flip the estimate to jammed — the max
+        speed in the window is the evidence of what traffic allowed."""
+        now = time.time()
+        self.est.ingest_vehicles([bus("V1", 47.60, -122.34, 18.0),
+                                  bus("V2", 47.601, -122.341, 18.0)],
+                                 now=now)
+        # Same vehicles report slow fixes near the stop moments later.
+        self.est.ingest_vehicles([bus("V1", 47.60, -122.34, 3.0),
+                                  bus("V2", 47.601, -122.341, 2.0)],
+                                 now=now + 10)
+        results = self.est.compute(now=now + 10)
+        self.assertLessEqual(results["INT-A"], 0.1)   # still free flow
 
     def test_crawling_buses_high_congestion(self):
         vehicles = [bus("V1", 47.60, -122.34, 2.0),
@@ -100,34 +145,43 @@ class TestCongestionEstimator(unittest.TestCase):
         self.est.compute()
         applied = self.est.apply(self.graph)
         self.assertEqual(applied, 1)
+        # ratio = 5/(25*0.75) = 0.267 → (1-0.267)/0.88 ≈ 0.833
+        expected = ratio_to_congestion(5.0 / (25.0 * BUS_FREEFLOW_FACTOR))
         self.assertAlmostEqual(
-            self.graph.get_intersection("INT-A").congestion, 0.8, places=2)
+            self.graph.get_intersection("INT-A").congestion,
+            expected, places=2)
 
     def test_highway_uses_55mph_baseline(self):
-        # 25 mph at a highway camera is HEAVY traffic (1 - 25/55 ≈ 0.55),
-        # not free flow.
+        # A bus at 25 mph at a highway camera is congested traffic
+        # (bus free flow there ≈ 41 mph), not free flow.
         self.est.ingest_vehicles([bus("V1", 47.70, -122.30, 25.0),
                                   bus("V2", 47.70, -122.30, 25.0)])
         results = self.est.compute()
-        self.assertAlmostEqual(results["INT-B"], 1.0 - 25.0 / 55.0, places=2)
+        expected = ratio_to_congestion(25.0 / (55.0 * BUS_FREEFLOW_FACTOR))
+        self.assertAlmostEqual(results["INT-B"], expected, places=2)
+        self.assertGreater(results["INT-B"], 0.3)
 
-    def test_flow_samples_high_weight(self):
+    def test_flow_samples_high_weight_raw_limit(self):
         # A single WSDOT flow record (weight 3) satisfies min_samples=2.
+        # Loop detectors measure general traffic → scored vs the RAW limit
+        # (no bus free-flow discount).
         n = self.est.ingest_flow([{"id": "F1", "lat": 47.60, "lon": -122.34,
                                    "speed_mph": 10.0}])
         self.assertEqual(n, 1)
         self.assertTrue(self.est.flow_active)
         results = self.est.compute()
         self.assertIn("INT-A", results)
-        self.assertAlmostEqual(results["INT-A"], 1.0 - 10.0 / 25.0, places=2)
+        self.assertAlmostEqual(results["INT-A"],
+                               ratio_to_congestion(10.0 / 25.0), places=2)
 
     def test_median_robust_to_outlier(self):
         self.est.ingest_vehicles([bus("V1", 47.60, -122.34, 20.0),
                                   bus("V2", 47.60, -122.34, 21.0),
                                   bus("V3", 47.60, -122.34, 1.0)])  # outlier
         results = self.est.compute()
-        # Median = 20 → congestion = 0.2, not dominated by the 1 mph outlier.
-        self.assertAlmostEqual(results["INT-A"], 0.2, places=2)
+        # Median ratio is from the 20 mph bus (≥ free flow) → ~0 congestion,
+        # not dominated by the 1 mph outlier.
+        self.assertLessEqual(results["INT-A"], 0.05)
 
 
 class TestEngineGuard(unittest.TestCase):
