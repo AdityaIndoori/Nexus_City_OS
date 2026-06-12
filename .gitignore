@@ -19,3 +19,6 @@ venv/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# local tooling (screenshot capture)
+shot_tmp/

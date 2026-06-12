@@ -3,6 +3,8 @@
 **A decision-intelligence platform for real-time smart-city traffic management
 and incident mitigation. Seattle-first. Extensible to any city on the planet.**
 
+🌐 **Landing page:** https://adityaindoori.github.io/Nexus_City_OS/
+
 Nexus City OS is a software-first layer that rides on a city's *existing*
 cameras, transit feeds, and signal controllers. It fuses fragmented municipal
 data into a living city graph, detects incidents with edge computer vision,
@@ -17,6 +19,27 @@ rollback and a tamper-evident audit trail.
 > PII redacted at the edge, AI that can *prove* it cannot act outside its
 > safety envelope, and a graduated Shadow → Advisory → Live rollout that lets
 > any city pilot with zero risk.
+
+## Screenshots (live platform)
+
+**The Traffic Operations Center** — citywide live grid (419 real camera
+intersections, congestion computed from real bus-GPS probes), SFD Real-Time
+911 dispatch queue, AI safety metrics, grounded copilot, and the
+tamper-evident audit trail:
+
+![Traffic Operations Center — citywide live Seattle map, 911 queue, AI safety metrics, audit trail](docs/screenshots/dashboard.png)
+
+**Incident workflow** — a collision at SR-99 @ Valley St: live traffic-camera
+frame, severity, the audit-built timeline, and operator actions (AI verify
+camera → request AI recommendation → approve/reject). Traffic flow lines
+follow real road geometry:
+
+![Incident workflow — collision card with live camera, timeline, and operator actions over real road-geometry traffic flow](docs/screenshots/incident.png)
+
+**Historical analytics** — hourly citywide congestion, click-to-locate
+hotspots, and incident/plan outcomes from the 7-day SQLite history:
+
+![Analytics tab — hourly congestion bars, hotspots, outcome chips](docs/screenshots/analytics.png)
 
 ---
 

@@ -46,6 +46,16 @@
              color:var(--dim); border-bottom:1px solid var(--line);}
   .term pre{padding:16px 20px; overflow-x:auto; color:#b8c8e8;}
   .term .c{color:#5a7194;} .term .g{color:var(--good);}
+  /* screenshots */
+  .shots{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+  .shot{background:var(--panel); border:1px solid var(--line);
+        border-radius:10px; overflow:hidden;}
+  .shot.full{grid-column:1 / -1;}
+  .shot img{display:block; width:100%; height:auto; cursor:zoom-in;}
+  .shot .cap{padding:10px 16px; font-size:13px; color:var(--dim);
+             border-top:1px solid var(--line);}
+  .shot .cap b{color:var(--text);}
+  @media (max-width:760px){ .shots{grid-template-columns:1fr;} }
   /* sections */
   section{padding:64px 0;}
   section h2{font-size:26px; margin-bottom:8px;}
@@ -117,6 +127,51 @@ Operator UI:  http://127.0.0.1:8757/</span></pre>
     </div>
   </div>
 </header>
+
+<section>
+  <div class="wrap">
+    <h2>The operator console — live</h2>
+    <p class="sub">Real screenshots from the running platform: live Seattle
+      data, real traffic cameras, real buses, real 911 dispatches.
+      Click any image to view full size.</p>
+    <div class="shots">
+      <div class="shot full">
+        <a href="screenshots/dashboard.png" target="_blank" rel="noopener">
+          <img src="screenshots/dashboard.png" loading="lazy"
+               alt="Nexus City OS Traffic Operations Center: citywide Seattle map with 419 camera intersections, live congestion from bus GPS, 911 dispatch queue, AI safety metrics, copilot, and hash-chained audit trail"></a>
+        <div class="cap"><b>Traffic Operations Center</b> — citywide live
+          grid (419 camera intersections, congestion from real bus-GPS
+          probes), SFD 911 dispatch queue, AI safety metrics, grounded
+          copilot, and the tamper-evident audit trail.</div>
+      </div>
+      <div class="shot full">
+        <a href="screenshots/incident.png" target="_blank" rel="noopener">
+          <img src="screenshots/incident.png" loading="lazy"
+               alt="Incident workflow: collision incident card with live traffic camera frame, hash-chained timeline, AI verify and recommendation actions, over a map with real road-geometry traffic flow"></a>
+        <div class="cap"><b>Incident workflow</b> — a collision at SR-99 @
+          Valley St: live camera frame, severity, audit-built timeline, and
+          the operator actions (AI verify camera → request AI recommendation
+          → approve/reject). Traffic flow lines follow real road geometry.</div>
+      </div>
+      <div class="shot">
+        <a href="screenshots/analytics.png" target="_blank" rel="noopener">
+          <img src="screenshots/analytics.png" loading="lazy"
+               alt="Analytics tab: hourly citywide congestion bars, top hotspots, incident and plan outcome chips"></a>
+        <div class="cap"><b>Historical analytics</b> — hourly congestion,
+          click-to-locate hotspots, incident &amp; plan outcomes (7-day
+          SQLite history).</div>
+      </div>
+      <div class="shot">
+        <a href="screenshots/incident_card.png" target="_blank" rel="noopener">
+          <img src="screenshots/incident_card.png" loading="lazy"
+               alt="Incident queue close-up: collision card with live camera thumbnail and 911 dispatch cards"></a>
+        <div class="cap"><b>Incident queue</b> — platform incidents with live
+          camera thumbnails alongside Citizen-style real-time 911 dispatch
+          cards.</div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section>
   <div class="wrap">
