@@ -128,6 +128,7 @@ class PlatformRuntime:
         # flow when WSDOT_ACCESS_CODE is set) — Phase 1.
         self.congestion = CongestionEstimator(self.engine.graph)
         self._last_flow_at = 0.0
+        self._last_911_at = 0.0
         # AI vision sweep over live camera frames — Phase 2. Constructed
         # always (so /api/vision/status works); STARTED only when enabled,
         # the topology is live, and the LLM client is available.
@@ -192,6 +193,14 @@ class PlatformRuntime:
                     pass
             self.congestion.compute()
             self.congestion.apply(engine.graph)
+            # M2 — auto-correlate traffic-impacting 911 dispatches to the
+            # nearest camera intersection (every 60 s; idempotent).
+            if live is not None and now_ts() - self._last_911_at >= 60.0:
+                self._last_911_at = now_ts()
+                try:
+                    engine.correlate_911(live.emergencies(max_age_s=1800.0))
+                except Exception:  # noqa: BLE001 — never break the tick
+                    pass
         engine.real_congestion_ids = self.congestion.fresh_ids()
         engine.record_history()
         engine.graph.set_weather(self.adapter.poll_weather())
@@ -300,7 +309,21 @@ def make_handler(runtime: PlatformRuntime):
                                 cam["live_type"] = meta["type"]
                     snapshot["live_data"] = bool(getattr(
                         runtime.adapter, "using_live_topology", False))
-                    real_n = len(engine.real_congestion_ids)
+                    # Per-intersection congestion provenance + confidence
+                    # (M1): tell the operator HOW each estimate was derived
+                    # (live bus probe / loop+probe) and how confident it is.
+                    real_ids = engine.real_congestion_ids
+                    for inter in snapshot["intersections"]:
+                        if inter["id"] in real_ids:
+                            m = runtime.congestion.meta(inter["id"])
+                            if m:
+                                inter["cong_source"] = m["kind"]
+                                inter["cong_confidence"] = m["confidence"]
+                            else:
+                                inter["cong_source"] = "live"
+                        else:
+                            inter["cong_source"] = "simulated"
+                    real_n = len(real_ids)
                     if real_n > 0:
                         src = f"live (bus GPS×{real_n}"
                         if runtime.congestion.flow_active:

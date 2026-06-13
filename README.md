@@ -46,7 +46,8 @@ hotspots, and incident/plan outcomes from the 7-day SQLite history:
 ## Quick Start (zero install dependencies — Python 3.10+ stdlib only)
 
 ```bash
-# Run the full test suite (119 tests — the safety suite is the trust artifact)
+# Run the full test suite (124 tests — the safety suite is the trust artifact)
+
 python -m unittest discover -s platform/tests -t platform
 
 # Launch the platform with REAL Seattle data (default)
@@ -193,11 +194,13 @@ KMS/HSM.
 | `platform/` | **Reference implementation** |
 | `platform/nexus/` | Platform core (see Architecture below) |
 | `platform/ui/index.html` | Operator Live Grid UI (TOC console) |
-| `platform/tests/` | 119 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed, congestion estimation, vision sweep, analytics, multi-city, E2E |
+| `platform/tests/` | 124 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed + auto-correlation, congestion estimation + confidence, vision sweep, analytics, multi-city, E2E |
 | `platform/run.py` | Launcher (`--host/--port/--city/--sim/--no-vision`) |
 | `platform/scripts/live_workflow_demo.py` | Scripted end-to-end mission thread |
 | `Dockerfile` / `docker-compose.yml` | Container deployment (python:3.12-slim, no pip installs) |
 | `.github/workflows/ci.yml` | CI: test matrix (3.10/3.12) + Docker build |
+| `shot_tmp/` (gitignored) | Screenshot capture tooling (puppeteer-core + Chrome) |
+
 
 ## Architecture
 
@@ -342,9 +345,12 @@ engine, edge, adapter = bootstrap(PortlandAdapter())
 python -m unittest discover -s platform/tests -t platform
 ```
 
-119 tests (network-independent): every MUTCD rule, every hallucination check,
+124 tests (network-independent): every MUTCD rule, every hallucination check,
 911-feed parsing (category/traffic-impact mapping, geo/time filtering,
 degradation),
+911↔incident auto-correlation (traffic dispatch raises/corroborates an
+incident, non-traffic ignored, idempotent, distance-bounded),
+
 LLM-output validation (hallucinated-ID and out-of-bound-delta rejection,
 deterministic fallback, safety-gating of LLM plans, vision degradation),
 real-congestion estimation (speed→congestion mapping, min-sample/freshness

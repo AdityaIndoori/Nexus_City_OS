@@ -78,7 +78,21 @@ city-wide directional signal*, not a ground-truth speed map. For procurement,
 NPMRDS (free for the agency customer) and the agency's own ATSPM feeds are
 the validation/calibration sources.
 
-**3. Other things that don't fully make sense yet (open, prioritized):**
+**3. 911 correlation was visual-only → FIXED (auto-correlation).**
+
+Real-time SFD 911 dispatches displayed alongside platform incidents but
+didn't auto-link. The engine now runs `correlate_911()` on a periodic
+sweep: each traffic-impacting dispatch (collision/MVI, hazard, fire blocking
+roadway) is matched to the nearest intersection within a 150 m radius;
+it either **corroborates** an existing active collision (appending dispatch
+provenance to the incident's action history) or **raises** a new incident
+tagged `detection_source="sfd_911"`. Dispatches are deduped by id and every
+correlation is audit-logged. Covered by `test_correlation.py` (traffic
+dispatch raises incident, non-traffic ignored, idempotent, distance-bounded,
+corroborates existing collision). (Roadmap M2 — 911-correlation portion ✅
+implemented.)
+
+**4. Other things that don't fully make sense yet (open, prioritized):**
 
 * *Topology from cameras* — intersections = camera locations and segments =
   nearest-neighbor links is a demo simplification. Real deployments must
@@ -92,13 +106,8 @@ the validation/calibration sources.
   through a multimodal LLM is the right demo, but production needs a cheap
   first-pass (frame differencing / small local model) with the LLM as the
   expensive second opinion. (Roadmap M2.)
-* *911 correlation is visual-only* — dispatches display next to incidents
-  but don't yet auto-link (an MVI dispatch at an intersection should attach
-  to/raise the platform incident). (Roadmap M2.)
-* *Impact simulation is CTM-lite* — fine for dry-run "directionality," not
-  defensible for before/after benefit claims. Benefit measurement should use
-  the probe-data before/after method every vendor (and Google Green Light)
-  uses. (Roadmap M3.)
+* *Impact simulation is CTM-lite* — fine for dry-run "directionality," not defensible for before/after benefit claims. Benefit measurement should use the probe-data before/after method every vendor (and Google Green Light) uses. (Roadmap M3.)
+
 
 ---
 

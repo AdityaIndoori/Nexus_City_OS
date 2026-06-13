@@ -102,6 +102,8 @@ class CongestionEstimator:
         self._samples: Dict[str, Dict[str, Tuple[float, float, float]]] = {}
         # intersection_id -> (congestion, computed_at)
         self._estimates: Dict[str, Tuple[float, float]] = {}
+        # intersection_id -> {confidence, sources, n_sources, kind}
+        self._meta: Dict[str, Dict[str, Any]] = {}
         # lazy spatial index: (bucket_lat, bucket_lon) -> [intersection_id]
         self._index: Dict[Tuple[int, int], List[str]] = {}
         self._index_size = -1
@@ -236,6 +238,18 @@ class CongestionEstimator:
             congestion = round(ratio_to_congestion(median_ratio), 3)
             results[iid] = congestion
             self._estimates[iid] = (congestion, now)
+            # Confidence: more independent sources + higher-weight (loop)
+            # data → higher confidence. WSDOT loops alone are authoritative;
+            # a lone bus pair is a weak directional signal.
+            has_flow = any(sid.startswith("flow:") for sid in fresh)
+            n_sources = len(fresh)
+            confidence = min(1.0, 0.35 + 0.18 * n_sources
+                             + (0.25 if has_flow else 0.0))
+            self._meta[iid] = {
+                "confidence": round(confidence, 2),
+                "n_sources": n_sources,
+                "kind": "loop+probe" if has_flow else "bus_probe",
+            }
         return results
 
     def fresh_ids(self, now: Optional[float] = None) -> Set[str]:
@@ -257,9 +271,22 @@ class CongestionEstimator:
                 continue
         return applied
 
+    def meta(self, iid: str) -> Optional[Dict[str, Any]]:
+        """Per-intersection estimate metadata (confidence, source kind,
+        number of independent sources), or None if no fresh estimate."""
+        if iid in self.fresh_ids():
+            return self._meta.get(iid)
+        return None
+
     def stats(self) -> Dict[str, Any]:
+        fresh = self.fresh_ids()
+        confidences = [self._meta[i]["confidence"]
+                       for i in fresh if i in self._meta]
         return {
             "tracked_intersections": len(self._samples),
-            "fresh_estimates": len(self.fresh_ids()),
+            "fresh_estimates": len(fresh),
             "flow_active": self.flow_active,
+            "mean_confidence": round(
+                sum(confidences) / len(confidences), 2)
+            if confidences else 0.0,
         }

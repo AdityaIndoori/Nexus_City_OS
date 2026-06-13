@@ -93,6 +93,8 @@ class NexusEngine:
         # Updated by the runtime each tick; empty by default so offline
         # deployments and tests behave exactly as before.
         self.real_congestion_ids: set = set()
+        # 911 dispatch ids already correlated into incidents (M2 dedupe)
+        self._correlated_911: set = set()
         # congestion history sampling throttle (Phase 3)
         self._last_history_at: float = 0.0
         # real-time event hub (SSE push): seq bump + condvar wakeup
@@ -270,6 +272,89 @@ class NexusEngine:
                     f"{itype.value.replace('_', ' ').title()} at "
                     f"{incident.intersection_id}", "high")
         return incident
+
+    def correlate_911(self, dispatches: List[Dict[str, Any]],
+                      radius_m: float = 150.0) -> int:
+        """M2 — 911↔incident auto-correlation.
+
+        A traffic-impacting SFD dispatch (MVI / collision) within
+        ``radius_m`` of a camera intersection raises a real platform
+        incident tagged ``detection_source="sfd_911"`` — so dispatch
+        evidence flows into the same incident pipeline as edge/vision
+        detections (dedupe, audit, operator queue). Returns the number of
+        incidents raised this call. Idempotent: a dispatch id is correlated
+        at most once.
+
+        ``dispatches`` are SFD rows (``id/type/category/traffic_impacting/
+        lat/lon``). Non-traffic dispatches (fires, medical) are ignored —
+        they already render on the 911 layer."""
+        raised = 0
+        for d in dispatches:
+            if not d.get("traffic_impacting"):
+                continue
+            did = str(d.get("id", ""))
+            if did in self._correlated_911:
+                continue
+            iid = self._nearest_intersection(
+                d.get("lat"), d.get("lon"), radius_m)
+            if iid is None:
+                continue
+            self._correlated_911.add(did)
+            # Dedupe against an existing active collision at this node.
+            existing = next(
+                (inc for inc in self.graph.incidents.values()
+                 if inc.intersection_id == iid
+                 and inc.type == IncidentType.COLLISION
+                 and inc.state.value not in ("resolved", "closed")), None)
+            if existing is not None:
+                existing.action_history.append({
+                    "at": now_ts(), "actor": "sfd_911_correlation",
+                    "action": f"911 dispatch corroborated: {d.get('type')}"})
+                continue
+            inter = self.graph.intersections.get(iid)
+            incident = Incident(
+                id=new_id("INC"), type=IncidentType.COLLISION,
+                intersection_id=iid, severity=0.8,
+                description=(f"SFD 911 dispatch '{d.get('type')}' at "
+                             f"{d.get('address', 'unknown')} "
+                             f"(~{int(radius_m)} m from "
+                             f"{inter.name if inter else iid})"),
+                detection_source="sfd_911")
+            self.graph.add_incident(incident)
+            self.audit.record(
+                actor="sfd_911_correlation", action="incident_detected",
+                targets=[iid],
+                after_state={"incident_id": incident.id,
+                             "type": "collision", "severity": 0.8,
+                             "detection_source": "sfd_911",
+                             "dispatch_id": did})
+            self._persist_incident(incident)
+            self._alert("incident_detected",
+                        f"911 traffic dispatch near "
+                        f"{inter.name if inter else iid}", "high")
+            self.emit_event("incident")
+            raised += 1
+        # Bound the dedupe set so it can't grow unbounded over a long run.
+        if len(self._correlated_911) > 2000:
+            self._correlated_911 = set(list(self._correlated_911)[-1000:])
+        return raised
+
+    def _nearest_intersection(self, lat: Optional[float], lon: Optional[float],
+                              radius_m: float) -> Optional[str]:
+        if lat is None or lon is None:
+            return None
+        # ~111 km per degree lat; cos-corrected lon. Linear search is fine
+        # at city scale and keeps this dependency-free.
+        import math
+        best_iid, best_m = None, radius_m
+        coslat = math.cos(math.radians(float(lat)))
+        for inter in self.graph.intersections.values():
+            dlat = (inter.lat - lat) * 111000.0
+            dlon = (inter.lon - lon) * 111000.0 * coslat
+            dist = math.hypot(dlat, dlon)
+            if dist <= best_m:
+                best_iid, best_m = inter.id, dist
+        return best_iid
 
     def _alert(self, kind: str, message: str, priority: str) -> None:
         with self._lock:
