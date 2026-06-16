@@ -339,8 +339,13 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // Cloudflare Turnstile site key — injected by the server from
-// $TURNSTILE_SITE_KEY at request time; empty string when CAPTCHA is off.
-const TURNSTILE_SITE_KEY = "__TURNSTILE_SITE_KEY__";
+// $TURNSTILE_SITE_KEY at request time; empty when CAPTCHA is off. If the
+// placeholder was never substituted (served statically / by an older
+// server), treat it as disabled so login is never blocked by a bogus key.
+const _TS_RAW = "__TURNSTILE_SITE_KEY__";
+const TURNSTILE_SITE_KEY =
+  (_TS_RAW && _TS_RAW.indexOf("TURNSTILE_SITE_KEY") === -1) ? _TS_RAW : "";
+
 let turnstileWidgetId = null;
 if(TURNSTILE_SITE_KEY){
   const s = document.createElement("script");

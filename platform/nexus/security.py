@@ -69,8 +69,9 @@ def security_headers(csp: bool = True) -> Dict[str, str]:
     if csp:
         headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "img-src 'self' data: https:; "
+            "img-src 'self' data: blob: https:; "
             "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+
             "script-src 'self' 'unsafe-inline' https://unpkg.com; "
             "connect-src 'self' https:; "
             "frame-ancestors 'none'; base-uri 'self'")
