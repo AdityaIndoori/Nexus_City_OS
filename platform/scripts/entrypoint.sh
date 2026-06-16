@@ -16,21 +16,28 @@
 # All server flags pass through:  ENTRYPOINT args + CMD → python run.py.
 set -eu
 
+# The app binds the host-provided $PORT (Render/Railway/etc. inject it;
+# defaults to 8757 locally). The host health-check expects the app on $PORT,
+# so we always bind it — whether or not a tunnel is running.
 PORT="${PORT:-8757}"
 
 if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
   if command -v cloudflared >/dev/null 2>&1; then
     echo "[entrypoint] Cloudflare Tunnel token detected — starting cloudflared sidecar."
-    # The tunnel's Public Hostname (configured in the Zero Trust dashboard)
-    # must point its Service at http://localhost:${PORT}.
+    # Point the tunnel's Public Hostname Service at http://127.0.0.1:${PORT}
+    # (use 127.0.0.1, NOT 'localhost', which can resolve to IPv6 [::1] where
+    # the server is not listening). The tunnel ingress is configured remotely
+    # in the Zero Trust dashboard / via API — set it to this same port.
     cloudflared tunnel --no-autoupdate run --token "${CLOUDFLARE_TUNNEL_TOKEN}" &
-    echo "[entrypoint] cloudflared started (pid $!)."
+    echo "[entrypoint] cloudflared started (pid $!); tunnel origin should be http://127.0.0.1:${PORT}."
   else
     echo "[entrypoint] WARNING: CLOUDFLARE_TUNNEL_TOKEN set but cloudflared not installed; serving directly."
   fi
 else
-  echo "[entrypoint] No Cloudflare Tunnel token — serving the origin directly."
+  echo "[entrypoint] No Cloudflare Tunnel — serving the origin directly on \$PORT (${PORT})."
 fi
 
-echo "[entrypoint] Launching Nexus City OS: python platform/run.py $* (PORT=${PORT})"
+echo "[entrypoint] Launching Nexus City OS (port ${PORT}): python platform/run.py $*"
 exec python platform/run.py --host 0.0.0.0 "$@"
+
+
