@@ -354,6 +354,18 @@ const TURNSTILE_SITE_KEY =
 const _PF_RAW = "__DEMO_PREFILL__";
 const DEMO_PREFILL = _PF_RAW === "1";
 
+// Cloudflare Access (Zero Trust) mode — injected by the server. When "1",
+// sign-in happens entirely at Cloudflare's edge before the app loads: there
+// is NO in-app login form, and identity rides along on the Access cookie of
+// every same-origin request. The placeholder-untouched case is treated OFF.
+const _CFA_RAW = "__CF_ACCESS__";
+const CF_ACCESS = _CFA_RAW === "1";
+const _CFA_LOGOUT_RAW = "__CF_ACCESS_LOGOUT__";
+const CF_ACCESS_LOGOUT =
+  (_CFA_LOGOUT_RAW && _CFA_LOGOUT_RAW.indexOf("CF_ACCESS_LOGOUT") === -1)
+    ? _CFA_LOGOUT_RAW : "/cdn-cgi/access/logout";
+
+
 
 let turnstileWidgetId = null;
 if(TURNSTILE_SITE_KEY){
@@ -411,17 +423,25 @@ function toast(msg){const t=$("toast"); t.textContent=msg;
   t._h=setTimeout(()=>t.style.display="none", 3500);}
 
 async function api(path, body){
-  const headers = {"Authorization": "Bearer "+TOKEN};
+  // In Cloudflare Access mode there is no bearer token — the Access cookie
+  // authenticates every same-origin request automatically.
+  const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
   const opts = body!==undefined
     ? {method:"POST", headers:{...headers,"Content-Type":"application/json"},
        body:JSON.stringify(body)}
     : {headers};
   const r = await fetch(path, opts);
   const data = await r.json();
-  if(r.status===401){ showLogin(); throw new Error(data.error||"Sign in required"); }
+  if(r.status===401){
+    // Access mode: the edge session expired — bounce through Cloudflare to
+    // re-authenticate (there is no in-app login form to show).
+    if(CF_ACCESS){ location.reload(); throw new Error("Re-authenticating…"); }
+    showLogin(); throw new Error(data.error||"Sign in required");
+  }
   if(!r.ok){ throw new Error(data.error || r.statusText); }
   return data;
 }
+
 
 /* ---------- auth ---------- */
 function showLogin(){ document.getElementById("loginoverlay").style.display="flex"; }
@@ -464,11 +484,31 @@ async function doLogout(){
 }
 window.doLogout = doLogout;
 function renderUser(){
-  $("userbadge").innerHTML = SESSION
-    ? `signed in: <b>${SESSION.user_id}</b> (${SESSION.role})
-       <button style="padding:1px 8px;margin-left:6px" onclick="doLogout()">Sign out</button>`
-    : "";
+  if(!SESSION){ $("userbadge").innerHTML = ""; return; }
+  // In Cloudflare Access mode the session is the verified Access identity;
+  // "Sign out" goes through Cloudflare's logout endpoint.
+  const signout = CF_ACCESS
+    ? `<a style="padding:1px 8px;margin-left:6px" href="${CF_ACCESS_LOGOUT}">Sign out</a>`
+    : `<button style="padding:1px 8px;margin-left:6px" onclick="doLogout()">Sign out</button>`;
+  const via = CF_ACCESS ? " · via Cloudflare Access" : "";
+  $("userbadge").innerHTML =
+    `signed in: <b>${SESSION.user_id}</b> (${SESSION.role})${via} ${signout}`;
 }
+
+// Cloudflare Access bootstrap: there is no login form — resolve the verified
+// identity from the Access JWT (server reads it from the request), then start.
+async function bootstrapAccess(){
+  hideLogin();
+  try{
+    const who = await api("/api/whoami");
+    SESSION = {user_id: who.user_id, role: who.role};
+    renderUser(); connectEvents(); refresh();
+  }catch(e){
+    // api() already reloads through Cloudflare on a 401; nothing else to do.
+  }
+}
+window.bootstrapAccess = bootstrapAccess;
+
 function pickAcct(btn, uid){
   $("li_user").value = uid;
   // Only auto-fill the demo password when the server opted in
@@ -1440,10 +1480,17 @@ document.addEventListener("keydown", e=>{
 initMap();
 renderUser();
 renderNotifToggle();
-if(TOKEN){ hideLogin(); connectEvents(); refresh(); }
-else { showLogin(); }
+if(CF_ACCESS){
+  // Cloudflare Access handled sign-in at the edge — no in-app login.
+  bootstrapAccess();
+} else if(TOKEN){
+  hideLogin(); connectEvents(); refresh();
+} else {
+  showLogin();
+}
 // Fallback poll (slow) in case SSE drops; SSE handles real-time updates.
-setInterval(()=>{ if(TOKEN) refresh(); }, 15000);
+setInterval(()=>{ if(CF_ACCESS || TOKEN) refresh(); }, 15000);
+
 </script>
 </body>
 </html>

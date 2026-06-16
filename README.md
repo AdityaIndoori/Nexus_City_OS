@@ -120,13 +120,21 @@ shield.
 > complementary Cloudflare auth layers, neither of which requires storing a
 > password in the page:
 >
-> - **Cloudflare Access (Zero Trust) — recommended for a real gate.** Put
->   Cloudflare Access *in front of* the Render origin (Zero Trust → Access →
+> - **Cloudflare Access (Zero Trust) — the ONLY sign-in path when enabled.**
+>   Put Cloudflare Access in front of the origin (Zero Trust → Access →
 >   Applications). Visitors authenticate at Cloudflare's edge with Google,
 >   GitHub, Microsoft, SAML/OIDC SSO, or one-time-PIN email **before the app
->   ever loads** — no app change needed. The platform's own login then runs
->   behind it as defense-in-depth (or you provision real accounts via SSO and
->   set `NEXUS_DISABLE_DEMO_ACCOUNTS=1`).
+>   ever loads**. Set `NEXUS_CF_ACCESS_TEAM_DOMAIN` + `NEXUS_CF_ACCESS_AUD`
+>   and the platform switches to **Access-only mode**: the in-app password
+>   form disappears, the demo accounts are not seeded, and every request's
+>   identity is taken from the **signed Access JWT** — which `nexus/cfaccess.py`
+>   verifies in pure stdlib (RS256 against the team JWKS, issuer + audience +
+>   expiry checked; the bare email header is never trusted alone). Map emails
+>   to roles with `NEXUS_CF_ACCESS_ADMINS` / `_OPERATORS` / `_ANALYSTS` /
+>   `_VIEWERS` (comma-separated); unmapped users get `NEXUS_CF_ACCESS_DEFAULT_ROLE`
+>   (default `viewer`). "Sign out" routes through `/cdn-cgi/access/logout`.
+>   Covered by `test_cfaccess.py`.
+
 > - **Cloudflare Turnstile — CAPTCHA on the login form (already wired in).**
 >   Set `TURNSTILE_SECRET` (server) + `TURNSTILE_SITE_KEY` (injected into the
 >   UI) and the login is verified server-side against Cloudflare; unset →

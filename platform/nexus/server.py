@@ -53,7 +53,9 @@ from . import bootstrap
 from .adapters import CityAdapter, SeattleLiveAdapter, TacomaAdapter
 from .analytics import Analytics
 from .auth import AuthError, Authenticator
+from .cfaccess import AccessError, CloudflareAccess
 from .congestion import CongestionEstimator
+
 from .roadgeom import RoadGeometry
 from .copilot import InjectionBlocked, RateLimitExceeded
 from .engine import NexusEngine, PermissionDenied
@@ -110,7 +112,15 @@ class PlatformRuntime:
                 city, CITY_ADAPTERS["seattle"])[0]
             adapter = adapter_cls()
         self.store = Store(db_path)
+        # Cloudflare Access (Zero Trust). When configured (team domain + AUD)
+        # this becomes the ONLY sign-in path: identity comes from the signed
+        # Access JWT verified at the origin; the in-app password login is
+        # disabled and the demo accounts are not seeded.
+        self.cfaccess = CloudflareAccess.from_env()
+        if self.cfaccess.enabled:
+            _os.environ.setdefault("NEXUS_DISABLE_DEMO_ACCOUNTS", "1")
         self.auth = Authenticator(self.store)
+
         self.engine, self.edge, self.adapter = bootstrap(
             adapter, self.store, use_llm=use_llm)
         # Ground the copilot chat in the live 911 feed (Citizen-style).
@@ -316,9 +326,32 @@ def make_handler(runtime: PlatformRuntime):
                 return {}
 
 
+        def _cf_access_jwt(self) -> str:
+            """Extract the Cloudflare Access assertion: the
+            ``Cf-Access-Jwt-Assertion`` header (preferred) or the
+            ``CF_Authorization`` cookie that Cloudflare sets on the origin."""
+            jwt = self.headers.get("Cf-Access-Jwt-Assertion", "").strip()
+            if jwt:
+                return jwt
+            cookie = self.headers.get("Cookie", "")
+            for part in cookie.split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == "CF_Authorization":
+                    return value.strip()
+            return ""
+
         def _principal(self, parsed) -> Dict[str, Any]:
-            """Verify the session token (Authorization header or ?token=)
-            and return its payload. Raises AuthError if absent/invalid."""
+            """Resolve the acting principal.
+
+            In **Cloudflare Access mode** identity comes solely from the
+            signed Access JWT (verified against the team JWKS) — there is no
+            bearer token and no in-app login. Otherwise fall back to the
+            HMAC session token (Authorization header or ?token=)."""
+            if runtime.cfaccess.enabled:
+                try:
+                    return runtime.cfaccess.verify(self._cf_access_jwt())
+                except AccessError as exc:
+                    raise AuthError(str(exc)) from None
             auth_header = self.headers.get("Authorization", "")
             token = ""
             if auth_header.startswith("Bearer "):
@@ -328,6 +361,7 @@ def make_handler(runtime: PlatformRuntime):
             if not token:
                 raise AuthError("Authentication required.")
             return runtime.auth.verify_token(token)
+
 
         def log_message(self, fmt: str, *args: Any) -> None:
             pass  # quiet by default
@@ -358,9 +392,19 @@ def make_handler(runtime: PlatformRuntime):
                         in ("0", "false", "False", ""))
                     html = html.replace(
                         "__DEMO_PREFILL__", "1" if _prefill else "")
+                    # Cloudflare Access mode: tell the UI to skip its own
+                    # login overlay entirely (identity is the Access JWT) and
+                    # where to send the "sign out" link.
+                    cfa = runtime.cfaccess
+                    html = html.replace(
+                        "__CF_ACCESS__", "1" if cfa.enabled else "")
+                    html = html.replace(
+                        "__CF_ACCESS_LOGOUT__",
+                        cfa.logout_url if cfa.enabled else "")
                     self._send_html(html)
 
                     return
+
 
                 # Per-IP rate gate on API GETs (SSE is exempt: it's a single
                 # long-lived stream, not a flood vector, and is auth-gated).
@@ -560,8 +604,17 @@ def make_handler(runtime: PlatformRuntime):
                 return
             try:
                 if route == "/api/login":
+                    # Cloudflare Access mode: the in-app password login is
+                    # disabled — sign-in is handled entirely at Cloudflare's
+                    # edge (Zero Trust), so there is no local credential path.
+                    if runtime.cfaccess.enabled:
+                        self._send_json(
+                            {"error": "Sign-in is handled by Cloudflare "
+                                      "Access."}, 403)
+                        return
                     user_id = str(body.get("user_id", ""))
                     # CAPTCHA: Cloudflare Turnstile on the public login path.
+
                     # Disabled (allowed) when TURNSTILE_SECRET is unset.
                     if not verify_turnstile(
                             str(body.get("turnstile_token", "")),
