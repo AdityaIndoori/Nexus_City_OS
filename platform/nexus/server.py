@@ -332,8 +332,16 @@ def make_handler(runtime: PlatformRuntime):
             route = parsed.path
             try:
                 if route in ("/", "/index.html"):
-                    self._send_html(UI_PATH.read_text(encoding="utf-8"))
+                    html = UI_PATH.read_text(encoding="utf-8")
+                    # Inject the Turnstile *site* key (public, safe to embed)
+                    # so the login widget renders only when CAPTCHA is on.
+                    import os as _os
+                    html = html.replace(
+                        "__TURNSTILE_SITE_KEY__",
+                        _os.environ.get("TURNSTILE_SITE_KEY", ""))
+                    self._send_html(html)
                     return
+
                 # Per-IP rate gate on API GETs (SSE is exempt: it's a single
                 # long-lived stream, not a flood vector, and is auth-gated).
                 if route != "/api/events" and not self._rate_ok():

@@ -59,6 +59,9 @@ services:
       # matching site key in the UI; unset → CAPTCHA disabled.
       - key: TURNSTILE_SECRET
         sync: false
+      - key: TURNSTILE_SITE_KEY     # public widget key, injected into the UI
+        sync: false
+
       # Do NOT ship the public demo passwords to a live instance: either
       # disable the demo accounts entirely...
       - key: NEXUS_DISABLE_DEMO_ACCOUNTS

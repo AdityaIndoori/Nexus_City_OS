@@ -250,8 +250,10 @@
     <label for="li_pass">Password</label>
     <input id="li_pass" type="password" value="nexus-op-1"
            autocomplete="current-password">
+    <div id="li_turnstile" class="cf-turnstile" style="margin-top:14px"></div>
     <button class="primary" onclick="doLogin()">Sign in</button>
     <div id="loginerr" role="alert"></div>
+
     <div class="sub" style="margin-top:12px;margin-bottom:0">Quick select (demo):</div>
     <div class="acctchips">
       <button class="sel" onclick="pickAcct(this,'op-1')">operator</button>
@@ -336,7 +338,28 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+// Cloudflare Turnstile site key — injected by the server from
+// $TURNSTILE_SITE_KEY at request time; empty string when CAPTCHA is off.
+const TURNSTILE_SITE_KEY = "__TURNSTILE_SITE_KEY__";
+let turnstileWidgetId = null;
+if(TURNSTILE_SITE_KEY){
+  const s = document.createElement("script");
+  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad";
+  s.async = true; s.defer = true;
+  document.head.appendChild(s);
+  window.onTurnstileLoad = function(){
+    turnstileWidgetId = window.turnstile.render("#li_turnstile",
+      {sitekey: TURNSTILE_SITE_KEY});
+  };
+} else {
+  // CAPTCHA disabled: hide the placeholder so it leaves no empty gap.
+  document.addEventListener("DOMContentLoaded", ()=>{
+    const el = document.getElementById("li_turnstile");
+    if(el) el.style.display = "none";
+  });
+}
 let TOKEN = sessionStorage.getItem("nexus_token") || "";
+
 let SESSION = JSON.parse(sessionStorage.getItem("nexus_session") || "null");
 let grid = null, status_ = null;
 let map = null, interLayer = null, vehLayer = null, emLayer = null,
@@ -391,13 +414,24 @@ function showLogin(){ document.getElementById("loginoverlay").style.display="fle
 function hideLogin(){ document.getElementById("loginoverlay").style.display="none"; }
 async function doLogin(){
   const err = $("loginerr"); err.textContent = "";
+  let turnstileToken = "";
+  if(TURNSTILE_SITE_KEY && window.turnstile && turnstileWidgetId!==null){
+    turnstileToken = window.turnstile.getResponse(turnstileWidgetId) || "";
+    if(!turnstileToken){ err.textContent = "Please complete the CAPTCHA."; return; }
+  }
   try{
     const r = await fetch("/api/login", {method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({user_id: $("li_user").value.trim(),
-                            password: $("li_pass").value})});
+                            password: $("li_pass").value,
+                            turnstile_token: turnstileToken})});
     const data = await r.json();
-    if(!r.ok) throw new Error(data.error || "Login failed");
+    if(!r.ok){
+      if(TURNSTILE_SITE_KEY && window.turnstile && turnstileWidgetId!==null)
+        window.turnstile.reset(turnstileWidgetId);   // one token per attempt
+      throw new Error(data.error || "Login failed");
+    }
+
     TOKEN = data.token; SESSION = data;
     sessionStorage.setItem("nexus_token", TOKEN);
     sessionStorage.setItem("nexus_session", JSON.stringify(data));
