@@ -133,7 +133,11 @@ shield.
 >   to roles with `NEXUS_CF_ACCESS_ADMINS` / `_OPERATORS` / `_ANALYSTS` /
 >   `_VIEWERS` (comma-separated); unmapped users get `NEXUS_CF_ACCESS_DEFAULT_ROLE`
 >   (default `viewer`). "Sign out" routes through `/cdn-cgi/access/logout`.
->   Covered by `test_cfaccess.py`.
+>   Covered by `test_cfaccess.py`. **No domain?** The image bundles a
+>   `cloudflared` Tunnel sidecar (runs only when `CLOUDFLARE_TUNNEL_TOKEN` is
+>   set) so you can front the origin with Cloudflare + Access without owning a
+>   domain — full walkthrough in **`CLOUDFLARE_ACCESS_SETUP.md`**.
+
 
 > - **Cloudflare Turnstile — CAPTCHA on the login form (already wired in).**
 >   Set `TURNSTILE_SECRET` (server) + `TURNSTILE_SITE_KEY` (injected into the

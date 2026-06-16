@@ -61,6 +61,28 @@ services:
         sync: false
       - key: TURNSTILE_SITE_KEY     # public widget key, injected into the UI
         sync: false
+      # --- Cloudflare Access (Zero Trust) — sole sign-in when set ---------
+      # Front the origin with a Cloudflare Tunnel (no domain needed): paste
+      # the tunnel token here and the cloudflared sidecar dials out to
+      # Cloudflare's edge. Point the tunnel's Public Hostname Service at
+      # http://localhost:$PORT (or http://localhost:8757). See
+      # CLOUDFLARE_ACCESS_SETUP.md.
+      - key: CLOUDFLARE_TUNNEL_TOKEN
+        sync: false
+      # When BOTH of these are set the platform switches to Access-only mode:
+      # the in-app password login is disabled, demo accounts are not seeded,
+      # and identity comes solely from the signed Access JWT. Set them ONLY
+      # after the Tunnel + an Access application (with a policy) are live, or
+      # you will lock everyone out.
+      - key: NEXUS_CF_ACCESS_TEAM_DOMAIN   # e.g. yourteam.cloudflareaccess.com
+        sync: false
+      - key: NEXUS_CF_ACCESS_AUD           # Access Application Audience (AUD) tag
+        sync: false
+      - key: NEXUS_CF_ACCESS_ADMINS        # comma-separated admin emails
+        sync: false
+      - key: NEXUS_CF_ACCESS_DEFAULT_ROLE  # role for authenticated, unmapped users
+        value: "viewer"
+
 
       # Do NOT ship the public demo passwords to a live instance: either
       # disable the demo accounts entirely...
