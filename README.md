@@ -100,8 +100,33 @@ The container honors the host's injected `$PORT` (the server defaults
 `--port` to `$PORT` and `--host` to `0.0.0.0` whenever `$PORT` is present),
 so the same image runs unchanged locally and on any cloud.
 
+### Hardening a public deployment
+
+The app-logic security (PBKDF2 credentials, HMAC bearer sessions, per-user
+lockout, RBAC, prompt-injection guard, hash-chained audit) is always on. For
+**public internet exposure**, two extra layers are included/recommended:
+
+**1. Cloudflare in front of the Render origin (infra — strongly recommended).**
+Point a Cloudflare-proxied DNS record at the Render URL for free DDoS
+protection, a WAF, edge rate-limiting, and bot scoring — the primary edge
+shield.
+
+**2. In-app edge hardening (`nexus/security.py`, always compiled in):**
+
+| Control | Behavior | Tuning env |
+|---|---|---|
+| **Per-IP rate limiting** | Token-bucket per client IP (general + a stricter login bucket that defeats username-rotation credential stuffing); 429 + `Retry-After` | `NEXUS_RATE_GENERAL`, `NEXUS_RATE_LOGIN`, … |
+| **Request-size cap** | Bodies over 64 KB → 413 (memory-DoS guard) | `NEXUS_MAX_BODY_BYTES` |
+| **Security headers** | HSTS, `nosniff`, `X-Frame-Options: DENY`, CSP, `Referrer-Policy` on every response | — |
+| **Real client IP** | Trusts `CF-Connecting-IP`/`X-Forwarded-For` only behind a proxy (else the socket peer, so the limiter can't be spoofed) | `NEXUS_TRUST_PROXY` |
+| **CAPTCHA on login** | Cloudflare **Turnstile** verified server-side on `/api/login`; fails closed on outage; disabled when unset | `TURNSTILE_SECRET` |
+| **No default creds in prod** | Override demo passwords per-user or disable the demo accounts entirely | `NEXUS_PASSWORD_<USER_ID>`, `NEXUS_DISABLE_DEMO_ACCOUNTS=1` |
+
+All pure-stdlib and covered by `test_security.py`. The camera proxy only
+fetches from a fixed server-side allow-list (no user URLs → no SSRF).
 
 In the UI, **click any intersection** to see its **live SDOT traffic camera
+
 image** and inject a collision scenario — then watch the full workflow:
 detection → incident → AI recommendation (confidence + provenance + dry-run
 simulation) → operator approval → mode-dependent execution → rollback.

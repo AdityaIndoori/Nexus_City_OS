@@ -48,6 +48,27 @@ services:
       # alone.
       - key: WSDOT_ACCESS_CODE
         sync: false
+      # --- Public-edge security hardening ------------------------------
+      # Behind Cloudflare/Render the real client IP arrives in
+      # CF-Connecting-IP / X-Forwarded-For, so trust proxy headers for the
+      # per-IP rate limiter. (Set to 0 only if the origin is directly
+      # internet-exposed with no proxy.)
+      - key: NEXUS_TRUST_PROXY
+        value: "1"
+      # Cloudflare Turnstile (CAPTCHA on login). Set the SECRET here and the
+      # matching site key in the UI; unset → CAPTCHA disabled.
+      - key: TURNSTILE_SECRET
+        sync: false
+      # Do NOT ship the public demo passwords to a live instance: either
+      # disable the demo accounts entirely...
+      - key: NEXUS_DISABLE_DEMO_ACCOUNTS
+        value: "0"          # set "1" for a locked-down deployment
+      # ...or override individual demo-account passwords (per-user env).
+      - key: NEXUS_PASSWORD_ADMIN_1
+        sync: false
+      - key: NEXUS_PASSWORD_OP_1
+        sync: false
+
 # To launch a different city on Render, change the Docker command in the
 # dashboard (Settings → Docker Command) to append flags, e.g.:
 #   python platform/run.py --host 0.0.0.0 --city tacoma

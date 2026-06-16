@@ -58,8 +58,16 @@ from .roadgeom import RoadGeometry
 from .copilot import InjectionBlocked, RateLimitExceeded
 from .engine import NexusEngine, PermissionDenied
 from .models import IncidentType, OperatingMode, now_ts
+from .security import (
+    IPRateLimiter,
+    MAX_BODY_BYTES,
+    client_ip,
+    security_headers,
+    verify_turnstile,
+)
 from .store import Store
 from .vision import VisionSweep
+
 
 UI_PATH = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 TICK_INTERVAL_S = 3.0
@@ -134,6 +142,10 @@ class PlatformRuntime:
         # the topology is live, and the LLM client is available.
         self.vision = VisionSweep(self.engine, self.adapter)
         self.analytics = Analytics(self.store)
+        # Public-edge abuse protection (defense in depth behind Cloudflare):
+        # per-IP token-bucket rate limiting + Turnstile on login.
+        self.ratelimit = IPRateLimiter()
+
         self.vision_enabled = bool(
             enable_vision
             and getattr(self.adapter, "using_live_topology", False)
@@ -231,12 +243,17 @@ def make_handler(runtime: PlatformRuntime):
 
         # ---- helpers ---------------------------------------------------
 
+        def _emit_security_headers(self) -> None:
+            for key, value in security_headers().items():
+                self.send_header(key, value)
+
         def _send_json(self, payload: Any, code: int = 200) -> None:
             body = json.dumps(payload, default=str).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self._emit_security_headers()
             self.end_headers()
             self.wfile.write(body)
 
@@ -245,19 +262,52 @@ def make_handler(runtime: PlatformRuntime):
             self.send_response(code)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self._emit_security_headers()
             self.end_headers()
             self.wfile.write(body)
+
+        def _client_ip(self) -> str:
+            peer = self.client_address[0] if self.client_address else "?"
+            return client_ip(self.headers, peer)
+
+        def _rate_ok(self, login: bool = False) -> bool:
+            """Per-IP token-bucket gate. On 429, writes the response (with
+            Retry-After) and returns False so the caller aborts."""
+            allowed, retry = runtime.ratelimit.check(
+                self._client_ip(), login=login)
+            if allowed:
+                return True
+            body = json.dumps(
+                {"error": "Rate limit exceeded. Slow down."}).encode("utf-8")
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Retry-After", str(int(retry) + 1))
+            self.send_header("Cache-Control", "no-store")
+            self._emit_security_headers()
+            self.end_headers()
+            self.wfile.write(body)
+            return False
+
+        class _BodyTooLarge(Exception):
+            pass
 
         def _body(self) -> Dict[str, Any]:
             length = int(self.headers.get("Content-Length", 0))
             if length == 0:
                 return {}
+            if length > MAX_BODY_BYTES:
+                # Drain a bounded amount so the socket stays sane, then 413.
+                self.rfile.read(min(length, MAX_BODY_BYTES))
+                raise Handler._BodyTooLarge(
+                    f"Request body exceeds {MAX_BODY_BYTES} bytes.")
             raw = self.rfile.read(length)
             try:
                 data = json.loads(raw)
                 return data if isinstance(data, dict) else {}
             except json.JSONDecodeError:
                 return {}
+
 
         def _principal(self, parsed) -> Dict[str, Any]:
             """Verify the session token (Authorization header or ?token=)
@@ -284,8 +334,13 @@ def make_handler(runtime: PlatformRuntime):
                 if route in ("/", "/index.html"):
                     self._send_html(UI_PATH.read_text(encoding="utf-8"))
                     return
+                # Per-IP rate gate on API GETs (SSE is exempt: it's a single
+                # long-lived stream, not a flood vector, and is auth-gated).
+                if route != "/api/events" and not self._rate_ok():
+                    return
                 # All other GET API routes require a valid session.
                 principal = self._principal(parsed)
+
                 if route == "/api/status":
                     self._send_json(engine.status())
                 elif route == "/api/events":
@@ -466,14 +521,35 @@ def make_handler(runtime: PlatformRuntime):
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             route = parsed.path
-            body = self._body()
+            # Per-IP rate gate BEFORE reading the body (cheap DoS guard);
+            # login uses the stricter bucket (credential-stuffing defence).
+            if not self._rate_ok(login=(route == "/api/login")):
+                return
+            try:
+                body = self._body()
+            except Handler._BodyTooLarge as exc:
+                self._send_json({"error": str(exc)}, 413)
+                return
             try:
                 if route == "/api/login":
                     user_id = str(body.get("user_id", ""))
+                    # CAPTCHA: Cloudflare Turnstile on the public login path.
+                    # Disabled (allowed) when TURNSTILE_SECRET is unset.
+                    if not verify_turnstile(
+                            str(body.get("turnstile_token", "")),
+                            remote_ip=self._client_ip()):
+                        engine.audit.record(
+                            actor=user_id or "unknown",
+                            action="login_failed", outcome="denied",
+                            detail="turnstile verification failed")
+                        self._send_json(
+                            {"error": "CAPTCHA verification failed."}, 403)
+                        return
                     try:
                         session = runtime.auth.login(
                             user_id, str(body.get("password", "")))
                     except AuthError as exc:
+
                         engine.audit.record(
                             actor=user_id or "unknown",
                             action="login_failed", outcome="denied",

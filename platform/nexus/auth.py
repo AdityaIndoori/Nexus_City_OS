@@ -84,12 +84,26 @@ class Authenticator:
         self._bootstrap_defaults()
 
     def _bootstrap_defaults(self) -> None:
+        """Seed demo accounts. On a PUBLIC deployment, set
+        ``NEXUS_DISABLE_DEMO_ACCOUNTS=1`` to skip the well-known demo
+        passwords entirely, and provision real accounts out-of-band via
+        ``create_user`` / SSO. Per-account passwords may also be overridden
+        from the environment, e.g. ``NEXUS_PASSWORD_ADMIN_1`` for ``admin-1``
+        (user-id uppercased, non-alphanumerics → ``_``), so the published
+        defaults never reach a live instance."""
+        if os.environ.get("NEXUS_DISABLE_DEMO_ACCOUNTS", "") in (
+                "1", "true", "True"):
+            return
         for user_id, role, password in DEFAULT_ACCOUNTS:
+            env_key = "NEXUS_PASSWORD_" + "".join(
+                c.upper() if c.isalnum() else "_" for c in user_id)
+            password = os.environ.get(env_key, password)
             if self._store.get_user(user_id) is None:
                 salt = os.urandom(16)
                 self._store.upsert_user(
                     user_id, role, salt, hash_password(password, salt),
                     time.time())
+
 
     # ---- credentials ------------------------------------------------------
 
