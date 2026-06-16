@@ -90,9 +90,36 @@ class TestAuth(unittest.TestCase):
         payload = self.auth.verify_token(session["token"])
         self.assertEqual(payload["sub"], "op-1")
 
+    def test_env_password_override_reconciled_on_existing_user(self):
+        # The default account already exists in the store; a NEW
+        # Authenticator with an env override must REPLACE the password
+        # (rotation-safe across a persisted-DB redeploy).
+        import os
+        os.environ["NEXUS_PASSWORD_OP_1"] = "rotated-secret"
+        try:
+            auth2 = Authenticator(self.store, secret=b"t" * 32)
+            with self.assertRaises(AuthError):
+                auth2.login("op-1", "nexus-op-1")   # old default gone
+            self.assertEqual(
+                auth2.login("op-1", "rotated-secret")["role"], "operator")
+        finally:
+            del os.environ["NEXUS_PASSWORD_OP_1"]
+
+    def test_disable_demo_accounts_env(self):
+        import os
+        os.environ["NEXUS_DISABLE_DEMO_ACCOUNTS"] = "1"
+        try:
+            fresh = Store(":memory:")
+            auth2 = Authenticator(fresh, secret=b"t" * 32)
+            with self.assertRaises(AuthError):
+                auth2.login("op-1", "nexus-op-1")   # never seeded
+        finally:
+            del os.environ["NEXUS_DISABLE_DEMO_ACCOUNTS"]
+
     def test_wrong_password_rejected(self):
         with self.assertRaises(AuthError):
             self.auth.login("op-1", "wrong")
+
 
     def test_unknown_user_rejected(self):
         with self.assertRaises(AuthError):

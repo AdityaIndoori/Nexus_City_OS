@@ -69,9 +69,16 @@ from .store import Store
 from .vision import VisionSweep
 
 
+import os as _os
+
 UI_PATH = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 TICK_INTERVAL_S = 3.0
-DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "data" / "nexus.db")
+# DB path is env-overridable (NEXUS_DB_PATH) so a deployment can point at a
+# mounted volume or force a fresh store without a code change.
+DEFAULT_DB = _os.environ.get(
+    "NEXUS_DB_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "nexus.db"))
+
 
 # Routes that do not require a session token.
 PUBLIC_ROUTES = {"/", "/index.html", "/api/login"}

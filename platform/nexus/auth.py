@@ -83,26 +83,46 @@ class Authenticator:
         self._failures: Dict[str, list] = {}   # user_id -> [ts, ...]
         self._bootstrap_defaults()
 
+    @staticmethod
+    def _password_env_key(user_id: str) -> str:
+        """Env var holding an override password for ``user_id`` — the id
+        uppercased with non-alphanumerics → ``_`` (e.g. admin-1 →
+        ``NEXUS_PASSWORD_ADMIN_1``)."""
+        return "NEXUS_PASSWORD_" + "".join(
+            c.upper() if c.isalnum() else "_" for c in user_id)
+
     def _bootstrap_defaults(self) -> None:
-        """Seed demo accounts. On a PUBLIC deployment, set
-        ``NEXUS_DISABLE_DEMO_ACCOUNTS=1`` to skip the well-known demo
-        passwords entirely, and provision real accounts out-of-band via
-        ``create_user`` / SSO. Per-account passwords may also be overridden
-        from the environment, e.g. ``NEXUS_PASSWORD_ADMIN_1`` for ``admin-1``
-        (user-id uppercased, non-alphanumerics → ``_``), so the published
-        defaults never reach a live instance."""
+        """Seed/reconcile demo accounts on every boot.
+
+        On a PUBLIC deployment set ``NEXUS_DISABLE_DEMO_ACCOUNTS=1`` to skip
+        the well-known demo passwords entirely (and provision real accounts
+        out-of-band via ``create_user`` / SSO).
+
+        Credential RECONCILIATION (the production-correct behaviour): a
+        per-account env override (``NEXUS_PASSWORD_<USER_ID>``) is applied on
+        EVERY startup, not just first creation — so rotating a password via
+        env reliably takes effect even when the SQLite store persisted across
+        a redeploy (e.g. a mounted volume). Without an override, the account
+        is created with its default password only if it doesn't already
+        exist (an operator-changed password is never clobbered)."""
         if os.environ.get("NEXUS_DISABLE_DEMO_ACCOUNTS", "") in (
                 "1", "true", "True"):
             return
-        for user_id, role, password in DEFAULT_ACCOUNTS:
-            env_key = "NEXUS_PASSWORD_" + "".join(
-                c.upper() if c.isalnum() else "_" for c in user_id)
-            password = os.environ.get(env_key, password)
-            if self._store.get_user(user_id) is None:
+        for user_id, role, default_password in DEFAULT_ACCOUNTS:
+            override = os.environ.get(self._password_env_key(user_id))
+            existing = self._store.get_user(user_id)
+            if override is not None:
+                # Reconcile to the env value every boot (rotation-safe).
                 salt = os.urandom(16)
                 self._store.upsert_user(
-                    user_id, role, salt, hash_password(password, salt),
-                    time.time())
+                    user_id, role, salt,
+                    hash_password(override, salt), time.time())
+            elif existing is None:
+                salt = os.urandom(16)
+                self._store.upsert_user(
+                    user_id, role, salt,
+                    hash_password(default_password, salt), time.time())
+
 
 
     # ---- credentials ------------------------------------------------------
