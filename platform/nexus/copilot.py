@@ -97,9 +97,15 @@ class Copilot:
         self._lock = threading.RLock()
         self._query_times: Dict[str, Deque[float]] = {}
         self._injection_attempts: List[Dict[str, Any]] = []
-        self.use_llm = use_llm
-        self.llm = LLMClient() if use_llm else None
+        # Construct the client, but only treat the LLM as ON when it is
+        # actually configured (absolute gateway URL + key). Otherwise the
+        # platform runs purely on the deterministic expert system — the
+        # copilot answers locally instead of erroring on a missing gateway.
+        client = LLMClient() if use_llm else None
+        self.use_llm = bool(use_llm and client is not None and client.configured)
+        self.llm = client if self.use_llm else None
         self.last_generator = "deterministic"
+
         # Optional callable returning extra live context (e.g. 911 feed)
         # appended to the chat LLM's grounding context.
         self.extra_context_fn = None

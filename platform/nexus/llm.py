@@ -75,19 +75,34 @@ class LLMClient:
         self.calls = 0
         self.failures = 0
 
+    @property
+    def configured(self) -> bool:
+        """True only when a usable absolute gateway URL + key are present.
+        Guards against a missing/relative base URL (which would otherwise make
+        urllib raise 'unknown url type: chat/completions')."""
+        return bool(self._key) and self._base.startswith(("http://", "https://"))
+
     def chat(self, model: str, messages: List[Dict[str, Any]],
              max_tokens: int = 1200,
              temperature: float = 0.2) -> str:
-        body = json.dumps({"model": model, "messages": messages,
-                           "max_tokens": max_tokens,
-                           "temperature": temperature}).encode("utf-8")
-        req = urllib.request.Request(
-            self._base + "/chat/completions", data=body,
-            headers={"Authorization": f"Bearer {self._key}",
-                     "Content-Type": "application/json"})
+        # Degrade gracefully when the gateway isn't configured, instead of
+        # letting urllib raise a raw ValueError on a relative/empty URL.
+        if not self.configured:
+            with self._lock:
+                self.failures += 1
+            raise LLMUnavailable(
+                "LLM gateway not configured (NEXUS_LLM_BASE_URL must be an "
+                "absolute http(s) URL and NEXUS_LLM_API_KEY must be set).")
         with self._lock:
             self.calls += 1
         try:
+            body = json.dumps({"model": model, "messages": messages,
+                               "max_tokens": max_tokens,
+                               "temperature": temperature}).encode("utf-8")
+            req = urllib.request.Request(
+                self._base + "/chat/completions", data=body,
+                headers={"Authorization": f"Bearer {self._key}",
+                         "Content-Type": "application/json"})
             with urllib.request.urlopen(req,
                                         timeout=REQUEST_TIMEOUT_S) as resp:
                 data = json.loads(resp.read())
@@ -96,6 +111,7 @@ class LLMClient:
             with self._lock:
                 self.failures += 1
             raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+
 
     def chat_vision(self, model: str, prompt: str, image_jpeg: bytes,
                     max_tokens: int = 700) -> str:
