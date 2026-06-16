@@ -1,0 +1,55 @@
+# Nexus City OS — Render Blueprint (Infrastructure as Code).
+#
+# Render is the recommended host for the LIVE backend: it runs the platform
+# as a long-lived stateful container (background tick loop, AI vision sweep,
+# /api/events SSE stream) — exactly what serverless hosts (Vercel) cannot do.
+#
+# Deploy:
+#   1. Push this repo to GitHub (already at github.com/AdityaIndoori/Nexus_City_OS).
+#   2. In Render: New → Blueprint → pick this repo. Render reads render.yaml.
+#   3. (Optional) set the LLM + WSDOT secrets below in the dashboard, then
+#      Apply. Render builds the existing Dockerfile and gives a public HTTPS
+#      URL with auto-renewing TLS.
+#
+# The container honors Render's injected $PORT (server.py defaults --port to
+# $PORT and --host to 0.0.0.0 when $PORT is present), so no Dockerfile change
+# is needed. A persistent disk keeps the hash-chained audit trail, governance
+# state, and the OSRM road-geometry cache across deploys/restarts.
+services:
+  - type: web
+    name: nexus-city-os
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # 'free' also works (note: free instances sleep
+                           # after inactivity and cold-start on next request)
+    region: oregon         # closest to the Seattle/WSDOT data sources
+    healthCheckPath: /
+    autoDeploy: true       # redeploy on every push to the default branch
+    # Persist SQLite (audit chain + governance) and the road-geometry cache.
+    disk:
+      name: nexus-data
+      mountPath: /app/platform/data
+      sizeGB: 1
+    envVars:
+      # --- App configuration -------------------------------------------
+      # PORT is provided by Render automatically; do not set it here.
+      - key: PYTHONUNBUFFERED      # stream logs live to the Render console
+        value: "1"
+      # --- Optional live integrations (set real values in the dashboard) -
+      # LLM gateway (OpenAI-compatible). WITHOUT these the platform still
+      # runs fully — it falls back to the deterministic expert system, so a
+      # public demo needs no secrets at all.
+      - key: NEXUS_LLM_BASE_URL
+        sync: false                # prompt in dashboard; never committed
+      - key: NEXUS_LLM_API_KEY
+        sync: false
+      # Optional WSDOT loop-detector flow (free signup) — augments the
+      # bus-GPS congestion estimate on freeways. Omit to run on bus probes
+      # alone.
+      - key: WSDOT_ACCESS_CODE
+        sync: false
+# To launch a different city on Render, change the Docker command in the
+# dashboard (Settings → Docker Command) to append flags, e.g.:
+#   python platform/run.py --host 0.0.0.0 --city tacoma
+# or for a zero-network public demo that needs no live feeds:
+#   python platform/run.py --host 0.0.0.0 --sim

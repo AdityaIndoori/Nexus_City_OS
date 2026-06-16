@@ -632,15 +632,26 @@ def serve(host: str = "127.0.0.1", port: int = 8757,
 def build_arg_parser():
     """CLI for direct module launch and platform/run.py (Phase 5)."""
     import argparse
+    import os
+    # Cloud hosts (Render, Railway, Fly, Cloud Run, Heroku) inject the bind
+    # port via $PORT; honor it so the same image deploys unchanged. $HOST
+    # lets a platform override the bind address (default 0.0.0.0 when $PORT
+    # is set, since cloud hosts always need all-interfaces binding).
+    env_port = os.environ.get("PORT")
+    default_host = os.environ.get(
+        "HOST", "0.0.0.0" if env_port else "127.0.0.1")
+    default_port = int(env_port) if env_port else 8757
     parser = argparse.ArgumentParser(
         prog="nexus-city-os",
-        description="Nexus City OS — smart-city traffic decision "
+        description="Nexus City OS - smart-city traffic decision "
                     "intelligence platform")
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="bind address (default 127.0.0.1; use "
-                             "0.0.0.0 in containers)")
-    parser.add_argument("--port", type=int, default=8757,
-                        help="HTTP port (default 8757)")
+
+    parser.add_argument("--host", default=default_host,
+                        help="bind address (default 127.0.0.1, or 0.0.0.0 "
+                             "when $PORT is set / $HOST override)")
+    parser.add_argument("--port", type=int, default=default_port,
+                        help="HTTP port (default 8757, or $PORT if set)")
+
     parser.add_argument("--city", choices=sorted(CITY_ADAPTERS),
                         default="seattle",
                         help="city adapter to launch (default seattle)")

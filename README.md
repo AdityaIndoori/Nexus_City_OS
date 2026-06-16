@@ -78,6 +78,29 @@ docker run -p 8757:8757 nexus-city-os --city tacoma # Tacoma
 CI (`.github/workflows/ci.yml`) runs the full test suite on Python 3.10 and
 3.12 plus a Docker build on every push.
 
+### Deploy a live public instance (Render)
+
+The platform is a **stateful, long-lived server** (background tick loop, AI
+vision sweep, `/api/events` SSE push) — so it belongs on a container host,
+not a serverless/static one. GitHub Pages and Vercel are perfect for the
+[landing page](https://adityaindoori.github.io/Nexus_City_OS/) but cannot run
+the backend; **Render / Railway / Fly.io** run the Docker image as-is.
+
+A one-click [Render Blueprint](render.yaml) is included:
+
+1. **New → Blueprint** in Render, pick this repo (Render reads `render.yaml`).
+2. Apply. Render builds the `Dockerfile`, attaches a 1 GB disk for the
+   SQLite audit chain + road-geometry cache, and serves a public HTTPS URL.
+3. *(Optional)* set `NEXUS_LLM_BASE_URL` / `NEXUS_LLM_API_KEY` (AI plans +
+   vision + copilot) and `WSDOT_ACCESS_CODE` (freeway flow) in the dashboard
+   — **omit them and the platform still runs**, falling back to the
+   deterministic expert system and bus-GPS-only congestion.
+
+The container honors the host's injected `$PORT` (the server defaults
+`--port` to `$PORT` and `--host` to `0.0.0.0` whenever `$PORT` is present),
+so the same image runs unchanged locally and on any cloud.
+
+
 In the UI, **click any intersection** to see its **live SDOT traffic camera
 image** and inject a collision scenario — then watch the full workflow:
 detection → incident → AI recommendation (confidence + provenance + dry-run
