@@ -4,6 +4,7 @@
 and incident mitigation. Seattle-first. Extensible to any city on the planet.**
 
 🌐 **Landing page:** https://adityaindoori.github.io/Nexus_City_OS/
+
 🔗 **Live demo (running platform):** https://nexus-city-os.onrender.com
  — sign in `admin-1 / nexus-admin-1` (free Render instance; it sleeps after
 ~15 min idle, so the first load may take 30–60 s to wake).
@@ -114,6 +115,29 @@ lockout, RBAC, prompt-injection guard, hash-chained audit) is always on. For
 Point a Cloudflare-proxied DNS record at the Render URL for free DDoS
 protection, a WAF, edge rate-limiting, and bot scoring — the primary edge
 shield.
+
+> **Cloudflare authentication options.** The platform supports two
+> complementary Cloudflare auth layers, neither of which requires storing a
+> password in the page:
+>
+> - **Cloudflare Access (Zero Trust) — recommended for a real gate.** Put
+>   Cloudflare Access *in front of* the Render origin (Zero Trust → Access →
+>   Applications). Visitors authenticate at Cloudflare's edge with Google,
+>   GitHub, Microsoft, SAML/OIDC SSO, or one-time-PIN email **before the app
+>   ever loads** — no app change needed. The platform's own login then runs
+>   behind it as defense-in-depth (or you provision real accounts via SSO and
+>   set `NEXUS_DISABLE_DEMO_ACCOUNTS=1`).
+> - **Cloudflare Turnstile — CAPTCHA on the login form (already wired in).**
+>   Set `TURNSTILE_SECRET` (server) + `TURNSTILE_SITE_KEY` (injected into the
+>   UI) and the login is verified server-side against Cloudflare; unset →
+>   CAPTCHA is simply off and login still works.
+>
+> **No pre-filled password.** The login fields ship **blank** on any
+> deployment. The demo-credential auto-fill (`op-1` / `nexus-op-1`) is a
+> local-walkthrough convenience that is **off by default** and only turns on
+> when you explicitly set `NEXUS_DEMO_PREFILL=1` (and never when
+> `NEXUS_DISABLE_DEMO_ACCOUNTS=1`).
+
 
 **2. In-app edge hardening (`nexus/security.py`, always compiled in):**
 

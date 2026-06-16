@@ -346,7 +346,20 @@ def make_handler(runtime: PlatformRuntime):
                     html = html.replace(
                         "__TURNSTILE_SITE_KEY__",
                         _os.environ.get("TURNSTILE_SITE_KEY", ""))
+                    # Demo credential pre-fill is OFF by default. It is only
+                    # enabled when an operator explicitly opts in via
+                    # NEXUS_DEMO_PREFILL=1 (handy for a local walkthrough) and
+                    # never when the demo accounts are disabled. On a public
+                    # deployment the login fields ship empty.
+                    _prefill = (
+                        _os.environ.get("NEXUS_DEMO_PREFILL", "0")
+                        in ("1", "true", "True", "yes")
+                        and _os.environ.get("NEXUS_DISABLE_DEMO_ACCOUNTS", "0")
+                        in ("0", "false", "False", ""))
+                    html = html.replace(
+                        "__DEMO_PREFILL__", "1" if _prefill else "")
                     self._send_html(html)
+
                     return
 
                 # Per-IP rate gate on API GETs (SSE is exempt: it's a single

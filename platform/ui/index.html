@@ -246,10 +246,11 @@
     <h2>NEXUS <span style="color:var(--accent)">CITY OS</span> — SIGN IN</h2>
     <div class="sub">Traffic Operations Center · sessions are audit-logged</div>
     <label for="li_user">User ID</label>
-    <input id="li_user" value="op-1" autocomplete="username">
+    <input id="li_user" value="" autocomplete="username">
     <label for="li_pass">Password</label>
-    <input id="li_pass" type="password" value="nexus-op-1"
+    <input id="li_pass" type="password" value=""
            autocomplete="current-password">
+
     <div id="li_turnstile" class="cf-turnstile" style="margin-top:14px"></div>
     <button class="primary" onclick="doLogin()">Sign in</button>
     <div id="loginerr" role="alert"></div>
@@ -345,6 +346,14 @@
 const _TS_RAW = "__TURNSTILE_SITE_KEY__";
 const TURNSTILE_SITE_KEY =
   (_TS_RAW && _TS_RAW.indexOf("TURNSTILE_SITE_KEY") === -1) ? _TS_RAW : "";
+
+// Demo credential pre-fill flag — injected by the server. "1" only when
+// NEXUS_DEMO_PREFILL=1 (local walkthrough convenience); empty on a public
+// deployment, so the login fields ship blank. If the placeholder was never
+// substituted (older/static server), treat it as OFF.
+const _PF_RAW = "__DEMO_PREFILL__";
+const DEMO_PREFILL = _PF_RAW === "1";
+
 
 let turnstileWidgetId = null;
 if(TURNSTILE_SITE_KEY){
@@ -462,11 +471,29 @@ function renderUser(){
 }
 function pickAcct(btn, uid){
   $("li_user").value = uid;
-  $("li_pass").value = "nexus-" + uid;
+  // Only auto-fill the demo password when the server opted in
+  // (NEXUS_DEMO_PREFILL=1). Otherwise just fill the user ID and let the
+  // operator type the password — nothing is pre-filled on a public deploy.
+  if(DEMO_PREFILL){
+    $("li_pass").value = "nexus-" + uid;
+  } else {
+    $("li_pass").value = "";
+    $("li_pass").focus();
+  }
   document.querySelectorAll(".acctchips button").forEach(
     b=>b.classList.toggle("sel", b===btn));
 }
 window.pickAcct = pickAcct;
+// Local-demo convenience: when the server opts in, pre-fill the operator
+// account so a single click signs in. Off by default (public deployments
+// ship blank login fields).
+if(DEMO_PREFILL){
+  document.addEventListener("DOMContentLoaded", ()=>{
+    $("li_user").value = "op-1";
+    $("li_pass").value = "nexus-op-1";
+  });
+}
+
 document.getElementById("li_pass").addEventListener("keydown",
   e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("chatin").addEventListener("keydown",
