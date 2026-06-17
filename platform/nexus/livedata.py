@@ -29,7 +29,10 @@ import os
 import threading
 import time
 import urllib.request
+from datetime import datetime as _datetime, timedelta as _timedelta, \
+    timezone as _timezone
 from typing import Any, Dict, List, Optional, Tuple
+
 
 USER_AGENT = "NexusCityOS/1.0 (municipal traffic decision-support reference)"
 
@@ -96,6 +99,39 @@ def _fetch_bytes(url: str, timeout: float = 12.0) -> Tuple[bytes, str]:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read(), resp.headers.get("Content-Type", "image/jpeg")
+
+
+def _us_pacific_is_dst(dt: "datetime") -> bool:
+    """US DST: 2nd Sunday of March 02:00 → 1st Sunday of November 02:00.
+    Evaluated against the naive local clock (good enough for a 1-hour
+    freshness window; the only ambiguous instants are the two DST seams)."""
+    year = dt.year
+    # 2nd Sunday of March
+    march = _datetime(year, 3, 8)
+    dst_start = march + _timedelta(days=(6 - march.weekday()) % 7)
+    dst_start = dst_start.replace(hour=2)
+    # 1st Sunday of November
+    nov = _datetime(year, 11, 1)
+    dst_end = nov + _timedelta(days=(6 - nov.weekday()) % 7)
+    dst_end = dst_end.replace(hour=2)
+    return dst_start <= dt < dst_end
+
+
+def _pacific_naive_to_epoch(ts: str) -> float:
+    """Convert a naive 'YYYY-MM-DDTHH:MM:SS' string in America/Los_Angeles
+    to a true Unix epoch, independent of the SERVER's timezone (Render = UTC).
+
+    The Socrata 911 feed stamps dispatches in Pacific local time with no tz
+    suffix; reading them with time.mktime() on a UTC host shifted everything
+    ~7h into the future and the freshness filter dropped them all (911 ×0)."""
+    try:
+        naive = _datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+    except (ValueError, TypeError):
+        return time.time()
+    offset_h = -7 if _us_pacific_is_dst(naive) else -8   # PDT / PST
+    aware = naive.replace(tzinfo=_timezone(_timedelta(hours=offset_h)))
+    return aware.timestamp()
+
 
 
 class _Cached:
@@ -280,13 +316,14 @@ class SeattleLiveData:
             raw_type = str(r.get("type", "Unknown"))
             cat, traffic = EMERGENCY_CATEGORIES.get(
                 raw_type.lower(), ("other", False))
-            # Socrata datetime is local Pacific without tz suffix.
+            # Socrata `datetime` is America/Los_Angeles local time with NO
+            # timezone suffix. We must convert it to a true epoch using the
+            # Pacific offset — NOT the server's local zone. (Render runs in
+            # UTC, so the old time.mktime() read every dispatch ~7h in the
+            # future and the "last hour" filter dropped them all → 911 ×0.)
             ts = str(r.get("datetime", ""))
-            try:
-                t = time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
-                at = time.mktime(t)
-            except ValueError:
-                at = time.time()
+            at = _pacific_naive_to_epoch(ts[:19])
+
             out.append({
                 "id": "SFD-" + str(r.get("incident_number", ts)),
                 "source": "sfd_realtime_911",

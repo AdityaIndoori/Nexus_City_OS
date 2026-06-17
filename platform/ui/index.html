@@ -321,8 +321,10 @@
       <span class="meta">Layers:</span>
       <span class="lyrtoggle" id="lyr_traffic" onclick="toggleLayer('traffic')" title="Traffic flow: green free / amber congested / red severe (lines follow real road paths)">
         <span class="dot" style="background:var(--good)"></span><span class="dot" style="background:var(--warn);margin-left:-7px"></span><span class="dot" style="background:var(--bad);margin-left:-7px"></span>Traffic <span class="tg">☑</span></span>
-      <span class="lyrtoggle" id="lyr_bus" onclick="toggleLayer('bus')" title="Live KC Metro buses">
-        <span class="dot" style="background:#62d0ff"></span>Buses <span class="tg">☑</span></span>
+      <span title="Live SDOT/WSDOT traffic cameras currently tracked">📷 <b id="camcount" style="color:var(--accent)">0</b> cams</span>
+      <span class="lyrtoggle" id="lyr_bus" onclick="toggleLayer('bus')" title="Live KC Metro buses currently tracked">
+        <span class="dot" style="background:#62d0ff"></span>Buses <b id="buscount" style="color:#62d0ff">0</b> <span class="tg">☑</span></span>
+
       <span class="lyrtoggle" id="lyr_em" onclick="toggleLayer('em')" title="Seattle Fire Dept Real-Time 911 (data.seattle.gov)">
         <span class="dot" style="background:#ff8c42"></span><b id="emcount" style="color:var(--warn)">911</b> <span class="tg">☑</span></span>
       <span class="lyrtoggle off" id="lyr_notif" onclick="toggleNotifications()" title="Browser notifications for new traffic-impacting 911 dispatches">
@@ -998,7 +1000,13 @@ function renderMap(){
   for(const vid of Object.keys(vehMarkers)){
     if(!seen.has(vid)){ vehLayer.removeLayer(vehMarkers[vid]); delete vehMarkers[vid]; }
   }
+  // Live tracking counts in the legend (cameras + buses currently tracked).
+  const cc = $("camcount");
+  if(cc) cc.textContent = (grid.cameras||[]).length;
+  const bc = $("buscount");
+  if(bc) bc.textContent = (grid.vehicles||[]).length;
 }
+
 
 async function injectScenario(iid){
   try{
