@@ -5,9 +5,11 @@ and incident mitigation. Seattle-first. Extensible to any city on the planet.**
 
 🌐 **Landing page:** https://adityaindoori.github.io/Nexus_City_OS/
 
-🔗 **Live demo (running platform):** https://nexus-city-os.onrender.com
- — sign in `admin-1 / nexus-admin-1` (free Render instance; it sleeps after
-~15 min idle, so the first load may take 30–60 s to wake).
+🔗 **Live demo (running platform):** https://nexus.aindoori.com
+ — gated by **Cloudflare Access** (Zero Trust): sign in with your authorized
+email via a one-time PIN; there is no password. (The deployment is fronted by
+a Cloudflare Tunnel and an invite-only Access policy.)
+
 
 
 Nexus City OS is a software-first layer that rides on a city's *existing*
