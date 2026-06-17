@@ -59,7 +59,7 @@ from .congestion import CongestionEstimator
 from .roadgeom import RoadGeometry
 from .copilot import InjectionBlocked, RateLimitExceeded
 from .engine import NexusEngine, PermissionDenied
-from .models import IncidentType, OperatingMode, now_ts
+from .models import IncidentType, OperatingMode, Role, now_ts
 from .security import (
     IPRateLimiter,
     MAX_BODY_BYTES,
@@ -364,9 +364,17 @@ def make_handler(runtime: PlatformRuntime):
             HMAC session token (Authorization header or ?token=)."""
             if runtime.cfaccess.enabled:
                 try:
-                    return runtime.cfaccess.verify(self._cf_access_jwt())
+                    principal = runtime.cfaccess.verify(self._cf_access_jwt())
                 except AccessError as exc:
                     raise AuthError(str(exc)) from None
+                # Register the Access-authenticated identity in the engine's
+                # RBAC table so privileged actions (ack/resolve/approve/mode)
+                # recognize the email subject (fixes "Unknown user <email>").
+                try:
+                    engine.users[principal["sub"]] = Role(principal["role"])
+                except (ValueError, KeyError):
+                    pass
+                return principal
             auth_header = self.headers.get("Authorization", "")
             token = ""
             if auth_header.startswith("Bearer "):

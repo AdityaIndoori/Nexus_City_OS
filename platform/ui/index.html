@@ -1076,7 +1076,7 @@ function aiJustificationHtml(inc){
       ? "Claude Haiku 4.5 (live camera vision)"
     : inc.detection_source === "sfd_911" ? "Seattle Fire Dept 911 dispatch"
     : "Edge computer-vision layer";
-  return `<details class="aiwhy"><summary>Why was this classified as
+  return `<details class="aiwhy" data-dk="aiwhy-${inc.id}"><summary>Why was this classified as
     "${esc(inc.type.replace(/_/g," "))}"?</summary>
     <div class="aibody">
       <div class="planchips" style="margin:2px 0 4px">
@@ -1146,6 +1146,10 @@ window.loadIncidents = loadIncidents;
 
 function renderIncidents(){
   const wrap = $("incidents");
+  // Capture which <details> are open so an SSE-driven re-render doesn't
+  // collapse the expander the operator just opened (keyed by data-dk).
+  const _openDK = new Set();
+  wrap.querySelectorAll('details[open][data-dk]').forEach(d=>_openDK.add(d.dataset.dk));
   // The "Traffic" category filter gates the whole platform-incident queue;
   // the per-type filters + time range are applied server-side in loadIncidents.
   const incidents = filterOn.traffic_incidents ? (queueIncidents||[]) : [];
@@ -1188,10 +1192,7 @@ function renderIncidents(){
         <span class="meta" style="color:${sc};font-weight:700">${(inc.severity*100).toFixed(0)}%</span>
         <span class="meta" style="margin-left:auto" title="${fmtTime(inc.detected_at)}">${fmtTime(inc.detected_at)} · ${fmtAgo(inc.detected_at)}</span>
       </div>
-      <details class="why"><summary>Detection detail</summary>
-        <div class="whytext">${inc.description}${inc.acknowledged_by?`<br>acknowledged by ${inc.acknowledged_by}`:""}</div></details>
-      ${aiJustificationHtml(inc)}
-      ${incidentTimeline(inc)}`;
+      ${aiJustificationHtml(inc)}`;
     // FROZEN detection-time frame — what the detector actually saw (NOT a
     // newer live image). Falls back to nothing if no frame was captured.
     if(inc.has_detection_frame){
@@ -1239,6 +1240,8 @@ function renderIncidents(){
     });
   }
   wrap.innerHTML = html;
+  // Restore the expanders the operator had open before this re-render.
+  _openDK.forEach(k=>{ const el = wrap.querySelector('details[data-dk="'+k+'"]'); if(el) el.open = true; });
 }
 
 function interName(iid){
