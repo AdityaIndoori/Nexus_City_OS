@@ -10,16 +10,33 @@ import os
 import sys
 import time
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from nexus.livedata import SeattleLiveData
+from nexus.livedata import SeattleLiveData, _us_pacific_is_dst
 
 
 def _row(rtype, lat=47.61, lon=-122.33, minutes_ago=5, num="F123"):
-    ts = time.strftime("%Y-%m-%dT%H:%M:%S",
-                       time.localtime(time.time() - minutes_ago * 60))
+    # The SFD feed stamps dispatches in *Seattle local* (Pacific) wall-clock
+    # with no timezone suffix, and the production parser interprets the
+    # string as Pacific. So the test must emit a Pacific-local string for the
+    # target instant — NOT the runner's localtime (CI runs in UTC, which
+    # would otherwise shift the parsed age by the PST/PDT offset and break
+    # the age filter). Build the Pacific wall-clock for `minutes_ago` so the
+    # round-trip through the production parser reconstructs the right epoch
+    # on any runner timezone.
+    target = time.time() - minutes_ago * 60
+    # _us_pacific_is_dst works on a NAIVE datetime (it builds naive DST seam
+    # datetimes internally). Approximate the Pacific wall-clock with the UTC
+    # instant to pick the offset — accurate away from the two DST seams,
+    # which is fine for a freshness-window test. (Build it via the tz-aware
+    # API then drop the tzinfo, since utcfromtimestamp is deprecated in 3.12.)
+    naive_utc = datetime.fromtimestamp(target, tz=timezone.utc).replace(
+        tzinfo=None)
+    offset = -7 * 3600 if _us_pacific_is_dst(naive_utc) else -8 * 3600
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(target + offset))
     return {"type": rtype, "latitude": str(lat), "longitude": str(lon),
             "datetime": ts, "address": "123 Test St",
             "incident_number": num}
