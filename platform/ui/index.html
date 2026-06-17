@@ -478,7 +478,9 @@ const typeOn = Object.fromEntries(INCIDENT_TYPES.map(t=>[t,true]));
 const incidentQuery = {range:"86400", order:"desc", limit:25};
 let queueIncidents = [];   // last fetched page from /api/incidents
 let queueTotal = 0;
+let queueReqSeq = 0;       // monotonic guard: ignore stale /api/incidents responses
 let myLocMarker = null;
+
 
 const emMarkers = {};         // emergency id -> marker
 const interMarkers = {};      // intersection id -> circleMarker
@@ -844,7 +846,14 @@ function renderEmergencies(){
 
 function popupHtml(inter){
   const cams = camByIntersection[inter.id] || [];
-  const liveCam = cams.find(c=>c.live);
+  // Prefer the camera that an ACTIVE incident at this intersection was
+  // detected on, so the popup shows the SAME feed as the incident card
+  // (several physically-distinct cameras can share one intersection).
+  const incCamId = ((status_?.incidents)||[])
+    .filter(i=>i.intersection_id===inter.id && i.camera_id)
+    .map(i=>i.camera_id)[0];
+  const liveCam = (incCamId && cams.find(c=>c.live && c.id===incCamId))
+                  || cams.find(c=>c.live);
   let html = `<b>${inter.name}</b><br>
     <span style="color:#8fa3c2">${inter.id} · congestion ${(inter.congestion*100).toFixed(0)}%`
     + (inter.ems_corridor ? " · EMS corridor" : "") + `</span><br>`;
@@ -1135,8 +1144,14 @@ async function loadIncidents(){
     params.set("types", types.join(","));
   // If every type is OFF, there's nothing to show.
   if(!types.length){ queueIncidents = []; queueTotal = 0; renderIncidents(); return; }
+  // Sequence guard: a dropdown change races with the 3s SSE refresh + 15s
+  // poll, all calling loadIncidents(). Without this, a slower earlier
+  // request can resolve AFTER the user's newer one and overwrite it with
+  // stale data — making the controls feel "delayed" or "not working".
+  const mySeq = ++queueReqSeq;
   try{
     const r = await api("/api/incidents?" + params.toString());
+    if(mySeq !== queueReqSeq) return;   // a newer query superseded this one
     queueIncidents = r.incidents || [];
     queueTotal = r.total || 0;
     renderIncidents();
