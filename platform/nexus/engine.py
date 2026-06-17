@@ -93,6 +93,14 @@ class NexusEngine:
         # sweep already attaches its own frame). Signature: (camera_id) ->
         # Optional[bytes]. Left None in tests / offline runs.
         self.frame_capture_fn = None
+        # Resolve the *live* camera identity (name + feed id) for a platform
+        # camera_id, so the incident card can name the exact camera the
+        # frozen frame came from. Several physically-distinct live cameras can
+        # share one intersection (different viewing directions), so the
+        # intersection name alone is ambiguous. Signature:
+        # (camera_id) -> Optional[dict(name, live_id, type)]. Set by runtime.
+        self.camera_meta_fn = None
+
 
         # intersections with a FRESH real-data congestion estimate (bus GPS /
         # WSDOT flow) — the simulator must not overwrite these (Phase 1).
@@ -604,6 +612,29 @@ class NexusEngine:
             "ai_justification": i.ai_justification,
             "ai_confidence": i.ai_confidence,
             "has_detection_frame": i.detection_frame_jpeg is not None,
+            # The *exact* live camera the frozen frame came from. Several
+            # cameras can share one intersection (different viewing
+            # directions), so this disambiguates which physical feed was
+            # analyzed at detection time.
+            **self._camera_meta(i.camera_id),
+        }
+
+    def _camera_meta(self, camera_id: Optional[str]) -> Dict[str, Any]:
+        """Resolve the live camera name / feed id for a platform camera_id
+        via the runtime hook. Returns {} when unavailable (tests/offline)."""
+        fn = self.camera_meta_fn
+        if fn is None or not camera_id:
+            return {}
+        try:
+            meta = fn(camera_id)
+        except Exception:  # noqa: BLE001 — never break serialization
+            return {}
+        if not meta:
+            return {}
+        return {
+            "camera_name": meta.get("name"),
+            "camera_live_id": meta.get("live_id"),
+            "camera_type": meta.get("type"),
         }
 
 

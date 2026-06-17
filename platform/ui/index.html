@@ -1200,9 +1200,9 @@ function renderIncidents(){
         alt="Detection-time frame for ${name}" title="Frame captured at detection time — click to expand"
         onclick="this.classList.toggle('expanded')"
         onerror="this.style.display='none'">
-        <span class="frozen-tag" title="This is the exact camera frame at the moment of detection (${fmtTime(inc.detected_at)}), not the latest live image.">📌 frame frozen at detection · ${fmtTime(inc.detected_at)}</span>
+        <span class="frozen-tag" title="This is the exact camera frame at the moment of detection (${fmtTime(inc.detected_at)}), not the latest live image. Several cameras can share one intersection — this frame is from the specific feed that detected the incident.">📌 frame frozen at detection · ${fmtTime(inc.detected_at)}${inc.camera_name?` · 📷 ${esc(inc.camera_name)}`:""}</span>
         <div class="row" style="gap:0">
-          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))">👁 Re-check live camera now</button>
+          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))" title="Re-fetch and re-analyze the live feed from this exact camera (${esc(inc.camera_name||inc.camera_id||'')})">👁 Re-check this camera live</button>
         </div>
         <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
     }

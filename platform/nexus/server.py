@@ -150,6 +150,14 @@ class PlatformRuntime:
                 return result[0] if result else None
             self.engine.frame_capture_fn = _capture_frame
 
+            # Resolve the live camera identity for a platform camera_id so the
+            # incident card can name the EXACT camera the frozen frame came
+            # from (co-located cameras share an intersection name).
+            def _camera_meta(camera_id: str):
+                return cam_map_for_capture.get(camera_id)
+            self.engine.camera_meta_fn = _camera_meta
+
+
         # Resolve real road paths for traffic-flow rendering (OSRM, cached
         # on disk; straight-line fallback until each path resolves).
         geom_cache = Path(db_path).parent / "road_geometry.json" \
