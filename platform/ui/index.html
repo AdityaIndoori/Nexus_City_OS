@@ -1118,6 +1118,43 @@ function onRangeChange(){
 }
 window.onRangeChange = onRangeChange;
 
+// Resolve the active time-range selector into an absolute [since, until]
+// epoch window (seconds). Used so the 911 dispatch list honors the SAME
+// selector as the incident queue. `null` = unbounded on that side.
+//   - "abs"  → the From/To datetime inputs
+//   - "0"    → all time (both null)
+//   - N (s)  → [now - N, now]
+function emTimeWindow(){
+  const v = ($("q_range") ? $("q_range").value : incidentQuery.range) || "0";
+  const now = Date.now() / 1000;
+  if(v === "abs"){
+    const from = $("q_from") && $("q_from").value;
+    const to = $("q_to") && $("q_to").value;
+    return {
+      since: from ? new Date(from).getTime() / 1000 : null,
+      until: to ? new Date(to).getTime() / 1000 : null,
+    };
+  }
+  if(v === "0") return {since: null, until: null};
+  const secs = parseInt(v, 10);
+  return {since: Number.isFinite(secs) ? now - secs : null, until: null};
+}
+
+// Human label for the 911 dispatch section header, matching the selector.
+function emRangeLabel(){
+  const sel = $("q_range");
+  if(sel){
+    const opt = sel.options[sel.selectedIndex];
+    if(opt){
+      if(sel.value === "abs") return "selected range";
+      // "Last 15 min" → "last 15 min"
+      return opt.textContent.trim().toLowerCase();
+    }
+  }
+  return "selected range";
+}
+
+
 // Fetch the incident queue from the server with the active time range, sort
 // order, page size, and type filters. Stores the page in `queueIncidents`
 // and re-renders. The "Traffic" category filter still gates the whole queue.
@@ -1169,8 +1206,17 @@ function renderIncidents(){
   // the per-type filters + time range are applied server-side in loadIncidents.
   const incidents = filterOn.traffic_incidents ? (queueIncidents||[]) : [];
   const plans = status_?.plans || [];
-  const emVisible = emergencies.filter(
-    e=>filterOn[emFilterKey(e.category)] ?? true);
+  // The 911 dispatch list must honor the SAME time-range selector as the
+  // incident queue above it (operators expect "Last 15 min" to mean 15 min
+  // everywhere). Compute the active [since, until] window from the selector;
+  // the feed itself only fetches the last hour, so ranges wider than that are
+  // capped by available data.
+  const emWin = emTimeWindow();
+  const emVisible = emergencies.filter(e =>
+    (filterOn[emFilterKey(e.category)] ?? true)
+    && (emWin.since === null || e.at >= emWin.since)
+    && (emWin.until === null || e.at <= emWin.until));
+
   // Result count for the current query window.
   const qc = $("q_count");
   if(qc) qc.textContent = filterOn.traffic_incidents
@@ -1236,8 +1282,18 @@ function renderIncidents(){
   // 911 events (Citizen-style) appear below platform incidents, compact,
   // click-to-locate on the map. Traffic-impacting calls first.
   if(emVisible.length){
+    // The feed itself only pulls the last hour, so for ranges WIDER than an
+    // hour the list is capped at "last hour" regardless of the selector.
+    const emWinSecs = (() => {
+      const v = incidentQuery.range;
+      if(v === "abs" || v === "0") return Infinity;
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) ? n : Infinity;
+    })();
+    const emLabel = emWinSecs <= 3600 ? emRangeLabel() : "last hour";
     html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
-      letter-spacing:.5px">911 dispatches · last hour · SFD live</div>`;
+      letter-spacing:.5px">911 dispatches · ${esc(emLabel)} · SFD live</div>`;
+
     const sorted = [...emVisible].sort((a,b)=>
       (b.traffic_impacting - a.traffic_impacting) || (b.at - a.at));
     sorted.slice(0, 25).forEach(e=>{
