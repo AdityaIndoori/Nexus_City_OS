@@ -88,6 +88,12 @@ class NexusEngine:
         }
         # rollback monitoring: plan_id -> baseline congestion per intersection
         self._monitoring: Dict[str, Dict[str, Any]] = {}
+        # Optional hook the runtime sets so the engine can freeze a
+        # detection-time camera frame for edge/911 incidents (the vision
+        # sweep already attaches its own frame). Signature: (camera_id) ->
+        # Optional[bytes]. Left None in tests / offline runs.
+        self.frame_capture_fn = None
+
         # intersections with a FRESH real-data congestion estimate (bus GPS /
         # WSDOT flow) — the simulator must not overwrite these (Phase 1).
         # Updated by the runtime each tick; empty by default so offline
@@ -249,6 +255,35 @@ class NexusEngine:
             IncidentType.TRANSIT_BREAKDOWN: 0.6,
             IncidentType.CONGESTION: 0.4,
         }.get(itype, 0.5)
+        # Classification justification (PRD §4.2): for AI-vision detections
+        # this is the Claude Haiku assessment carried on the telemetry — the
+        # actual *why*. For the edge CV simulator it's a deterministic
+        # explanation of the rule that fired.
+        if telemetry.source == "ai_vision" and telemetry.ai_assessment:
+            ai_justification = telemetry.ai_assessment
+        else:
+            ai_justification = (
+                f"Classified as '{itype.value.replace('_', ' ')}' because the "
+                f"edge computer-vision layer observed an average approach speed "
+                f"of {telemetry.avg_speed_mph:.1f} mph with "
+                f"{telemetry.stopped_vehicles} stopped vehicle(s) at camera "
+                f"{telemetry.camera_id}. Speeds near zero with multiple "
+                f"stationary vehicles match the stopped-vehicle/collision "
+                f"signature rather than normal signal queueing.")
+        # Freeze the detection-time frame (decode the base64 jpeg carried on
+        # the telemetry). The operator must always see what the detector saw —
+        # never a newer live image. If the detector didn't attach a frame
+        # (edge simulator), best-effort fetch the current frame ONCE now and
+        # freeze that as the detection-time evidence.
+        frame_jpeg = None
+        if telemetry.frame_b64:
+            try:
+                import base64 as _b64
+                frame_jpeg = _b64.b64decode(telemetry.frame_b64)
+            except Exception:  # noqa: BLE001
+                frame_jpeg = None
+        if frame_jpeg is None:
+            frame_jpeg = self._capture_frame(telemetry.camera_id)
         incident = Incident(
             id=new_id("INC"),
             type=itype,
@@ -258,8 +293,13 @@ class NexusEngine:
                          f"(avg speed {telemetry.avg_speed_mph:.1f} mph, "
                          f"{telemetry.stopped_vehicles} stopped)"),
             detection_source=telemetry.source,
+            camera_id=telemetry.camera_id,
+            ai_justification=ai_justification,
+            ai_confidence=telemetry.ai_confidence,
+            detection_frame_jpeg=frame_jpeg,
         )
         self.graph.add_incident(incident)
+
         self.audit.record(actor="anomaly_detection", action="incident_detected",
                           targets=[incident.intersection_id],
                           after_state={"incident_id": incident.id,
@@ -476,6 +516,96 @@ class NexusEngine:
         # Incident Queue ranking by severity (PRD §2 multi-incident handling)
         incidents.sort(key=lambda i: i.severity, reverse=True)
         return incidents
+
+    def _capture_frame(self, camera_id: str) -> Optional[bytes]:
+        """Best-effort freeze of the current camera frame at detection time.
+        Uses the runtime-injected hook if present; otherwise None (offline /
+        tests). Never raises."""
+        fn = self.frame_capture_fn
+        if fn is None or not camera_id:
+            return None
+        try:
+            return fn(camera_id)
+        except Exception:  # noqa: BLE001 — evidence capture is best-effort
+            return None
+
+    def incident_frame(self, incident_id: str) -> Optional[bytes]:
+        """Return the frozen detection-time jpeg for an incident, if any."""
+        inc = self.graph.incidents.get(incident_id)
+        return inc.detection_frame_jpeg if inc is not None else None
+
+    def query_incidents(self, since: Optional[float] = None,
+                        until: Optional[float] = None,
+                        types: Optional[List[str]] = None,
+                        sources: Optional[List[str]] = None,
+                        include_resolved: bool = True,
+                        order: str = "desc",
+                        limit: int = 50,
+                        offset: int = 0) -> Dict[str, Any]:
+        """Filtered, sorted, paginated incident query for the Incident Queue.
+
+        Filters: ``since``/``until`` (epoch seconds, on detected_at),
+        ``types`` (IncidentType values), ``sources`` (detection_source),
+        ``include_resolved``. ``order`` is "asc"|"desc" by detection time.
+        Returns a dict with the matched window (``incidents``) plus
+        ``total`` (matches before paging) and ``returned``."""
+        with self._lock:
+            all_inc = list(self.graph.incidents.values())
+        type_set = set(types) if types else None
+        source_set = set(sources) if sources else None
+
+        def _match(i: Incident) -> bool:
+            if not include_resolved and i.state.value in ("resolved", "closed"):
+                return False
+            if since is not None and i.detected_at < since:
+                return False
+            if until is not None and i.detected_at > until:
+                return False
+            if type_set is not None and i.type.value not in type_set:
+                return False
+            if source_set is not None and i.detection_source not in source_set:
+                return False
+            return True
+
+        matched = [i for i in all_inc if _match(i)]
+        matched.sort(key=lambda i: i.detected_at, reverse=(order != "asc"))
+        total = len(matched)
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), 200))
+        page = matched[offset:offset + limit]
+        return {
+            "total": total,
+            "returned": len(page),
+            "offset": offset,
+            "limit": limit,
+            "order": "asc" if order == "asc" else "desc",
+            "incidents": [self._incident_dict(i) for i in page],
+        }
+
+    def _incident_dict(self, i: Incident) -> Dict[str, Any]:
+        """Full incident serialization for the queue (includes the AI
+        classification justification and whether a frozen frame exists)."""
+        return {
+            "id": i.id, "type": i.type.value,
+            "intersection_id": i.intersection_id,
+            "intersection_name": (
+                self.graph.intersections[i.intersection_id].name
+                if i.intersection_id in self.graph.intersections
+                else i.intersection_id),
+            "severity": i.severity, "state": i.state.value,
+            "detected_at": i.detected_at,
+            "acknowledged_by": i.acknowledged_by,
+            "resolved_at": i.resolved_at,
+            "resolution": i.resolution,
+            "description": i.description,
+            "action_history": i.action_history[-10:],
+            "detection_source": i.detection_source,
+            "camera_id": i.camera_id,
+            "ai_justification": i.ai_justification,
+            "ai_confidence": i.ai_confidence,
+            "has_detection_frame": i.detection_frame_jpeg is not None,
+        }
+
 
     # ------------------------------------------------------------------
     # Recommendation workflow (PRD §5)
@@ -754,16 +884,8 @@ class NexusEngine:
                      sorted(self.plans.values(),
                             key=lambda p: p.created_at, reverse=True)[:50]]
             alerts = list(self.alerts[-20:])
-        incidents = [{
-            "id": i.id, "type": i.type.value,
-            "intersection_id": i.intersection_id,
-            "severity": i.severity, "state": i.state.value,
-            "detected_at": i.detected_at,
-            "acknowledged_by": i.acknowledged_by,
-            "description": i.description,
-            "action_history": i.action_history[-10:],
-            "detection_source": i.detection_source,
-        } for i in self.active_incidents()]
+        incidents = [self._incident_dict(i) for i in self.active_incidents()]
+
         return {
             "city_id": self.city_id,
             "mode": self.mode.value,

@@ -20,9 +20,11 @@ Design for testability:
 """
 from __future__ import annotations
 
+import base64
 import threading
 import time
 import traceback
+
 from typing import Any, Callable, Dict, List, Optional
 
 from .models import EdgeTelemetry, now_ts
@@ -166,24 +168,37 @@ class VisionSweep:
                     continue
                 analyzed += 1
                 self.frames_analyzed += 1
-                raised += self._publish(cam, analysis)
+                raised += self._publish(cam, analysis, frame)
+
             except Exception as exc:  # noqa: BLE001 — degrade, never crash
                 self.degraded_count += 1
                 self.last_error = f"{type(exc).__name__}: {exc}"
         return {"analyzed": analyzed, "incidents_raised": raised,
                 "at": self.last_sweep_at}
 
-    def _publish(self, cam: Dict[str, Any], analysis: Dict[str, Any]) -> int:
+    def _publish(self, cam: Dict[str, Any], analysis: Dict[str, Any],
+                 frame: Optional[bytes] = None) -> int:
         """Translate a vision result into redacted EdgeTelemetry on the
-        engine's telemetry topic. Returns 1 if an anomaly was raised."""
+        engine's telemetry topic. Returns 1 if an anomaly was raised.
+
+        When an anomaly is raised, the AI assessment (the *why*), the model's
+        confidence, and the actual frame the model analyzed are carried on the
+        telemetry so the incident freezes its detection-time evidence."""
         iid = cam.get("intersection_id", "")
         cong_word = str(analysis.get("congestion_visible", "")).lower()
         congestion = CONGESTION_LEVELS.get(cong_word, 0.2)
         confidence = float(analysis.get("confidence_pct", 0) or 0)
         incident_visible = bool(analysis.get("incident_visible"))
+        assessment = str(analysis.get("assessment", ""))
         anomaly: Optional[str] = None
         if incident_visible and confidence >= CONFIDENCE_FLOOR_PCT:
-            anomaly = map_anomaly(str(analysis.get("assessment", "")))
+            anomaly = map_anomaly(assessment)
+        frame_b64: Optional[str] = None
+        if anomaly and frame:
+            try:
+                frame_b64 = base64.b64encode(frame).decode("ascii")
+            except Exception:  # noqa: BLE001 — evidence is best-effort
+                frame_b64 = None
         telemetry = EdgeTelemetry(
             camera_id=cam.get("cam_id", ""),
             intersection_id=iid,
@@ -194,7 +209,11 @@ class VisionSweep:
             anomaly=anomaly,
             redacted=True,             # AI sees only the public frame
             source="ai_vision",
+            ai_assessment=assessment if anomaly else "",
+            ai_confidence=confidence if anomaly else None,
+            frame_b64=frame_b64,
         )
+
         self.engine.bus.publish(self.engine.telemetry_topic,
                                 telemetry.to_json())
         if anomaly:

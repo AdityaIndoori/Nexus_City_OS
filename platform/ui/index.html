@@ -88,7 +88,36 @@
   .fbtn{margin:0; padding:2px 10px; font-size:11px; border-radius:10px;
         background:var(--panel2);}
   .fbtn.on{background:#114a86; border-color:#1d6cc0; font-weight:700;}
+  /* incident-queue controls (time range / sort / page size / types) */
+  .qctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+        padding:6px 12px; border-bottom:1px solid var(--line);
+        flex:0 0 auto; font-size:11px; color:var(--dim);}
+  .qctl label{display:flex; gap:4px; align-items:center; white-space:nowrap;}
+  .qctl select,.qctl input[type=datetime-local]{background:var(--panel2);
+        color:var(--text); border:1px solid var(--line); border-radius:5px;
+        padding:2px 6px; font-size:11px;}
+  .qctl .abs{display:none; gap:6px; align-items:center; flex-wrap:wrap;}
+  .qctl.absmode .abs{display:flex;}
+  .qctl .qcount{margin-left:auto; color:var(--dim);}
+  .typebar{display:flex; gap:5px; padding:4px 12px; flex-wrap:wrap;
+           border-bottom:1px solid var(--line); flex:0 0 auto;}
+  /* AI classification justification (why this was flagged) */
+  details.aiwhy{margin:6px 0; border:1px solid #2a3b66; border-radius:6px;
+                background:#0f1830;}
+  details.aiwhy summary{cursor:pointer; color:var(--accent); font-size:11px;
+                        list-style:none; user-select:none; padding:6px 9px;
+                        font-weight:700;}
+  details.aiwhy summary::before{content:"🤖 ▸ ";}
+  details.aiwhy[open] summary::before{content:"🤖 ▾ ";}
+  details.aiwhy .aibody{font-size:12px; color:var(--text); padding:0 10px 9px;}
+  details.aiwhy .aibody .lbl{color:var(--dim); font-size:10px;
+                             text-transform:uppercase; letter-spacing:.4px;
+                             margin-top:6px;}
+  .frozen-tag{display:inline-block; margin-top:6px; font-size:10px;
+              color:var(--warn); border:1px solid #806022; border-radius:9px;
+              padding:1px 8px;}
   /* 911 event cards in the queue */
+
   .emcard{cursor:pointer;}
   .emcard:hover{border-color:var(--accent);}
   /* incidents & plans */
@@ -305,7 +334,42 @@
   <section class="panel" id="sidepanel" aria-label="Incidents and recommendations">
     <h2>Incident Queue &amp; AI Recommendations</h2>
     <div class="filterbar" id="filterbar" role="group" aria-label="Filter queue and map"></div>
+    <div class="qctl" id="queuecontrols" role="group" aria-label="Incident queue time range, sort and paging">
+      <label>Time range
+        <select id="q_range" onchange="onRangeChange()" aria-label="Time range">
+          <option value="900">Last 15 min</option>
+          <option value="3600">Last 1 hour</option>
+          <option value="10800">Last 3 hours</option>
+          <option value="43200">Last 12 hours</option>
+          <option value="86400" selected>Last 24 hours</option>
+          <option value="604800">Last 7 days</option>
+          <option value="0">All time</option>
+          <option value="abs">Absolute…</option>
+        </select>
+      </label>
+      <span class="abs">
+        <label>From <input type="datetime-local" id="q_from" onchange="loadIncidents()"></label>
+        <label>To <input type="datetime-local" id="q_to" onchange="loadIncidents()"></label>
+      </span>
+      <label>Sort
+        <select id="q_order" onchange="loadIncidents()" aria-label="Sort order">
+          <option value="desc" selected>Newest first</option>
+          <option value="asc">Oldest first</option>
+        </select>
+      </label>
+      <label>Show
+        <select id="q_limit" onchange="loadIncidents()" aria-label="Page size">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <span class="qcount" id="q_count"></span>
+    </div>
+    <div class="typebar" id="typebar" role="group" aria-label="Filter by incident type"></div>
     <div class="body" id="incidents"></div>
+
   </section>
 
   <div id="bottompanels">
@@ -400,7 +464,20 @@ const FILTER_LABELS = {traffic_incidents:"⚠ Traffic", fire:"🔥 Fire",
   mva:"🚗 MVA", medical:"🚑 Medical", rescue:"⛑ Rescue",
   hazmat:"☣ Hazmat", violence:"🚨 Violence", other:"📟 Other"};
 const filterOn = Object.fromEntries(FILTERS.map(f=>[f,true]));
+// Incident-type filters for the queue (independent of the category filters).
+const INCIDENT_TYPES = ["collision","stopped_vehicle","wrong_way_driver",
+                        "pedestrian_on_highway","congestion","transit_breakdown"];
+const TYPE_LABELS = {collision:"💥 Collision", stopped_vehicle:"🛑 Stopped",
+  wrong_way_driver:"↩ Wrong-way", pedestrian_on_highway:"🚶 Pedestrian",
+  congestion:"🚦 Congestion", transit_breakdown:"🚌 Transit"};
+const typeOn = Object.fromEntries(INCIDENT_TYPES.map(t=>[t,true]));
+// Incident-queue query state (time range / sort / paging). `range` is a
+// window in seconds (0 = all time, "abs" = absolute From/To inputs).
+const incidentQuery = {range:"86400", order:"desc", limit:25};
+let queueIncidents = [];   // last fetched page from /api/incidents
+let queueTotal = 0;
 let myLocMarker = null;
+
 const emMarkers = {};         // emergency id -> marker
 const interMarkers = {};      // intersection id -> circleMarker
 const vehMarkers = {};        // vehicle id -> circleMarker
@@ -979,16 +1056,104 @@ function fmtAgo(ts){
 }
 function sevColor(s){ return s>0.7 ? "var(--bad)" : s>0.4 ? "var(--warn)" : "var(--good)"; }
 
+// Click-to-expand: WHY the platform classified this activity as this
+// incident type. For AI-vision detections this is the Claude Haiku
+// assessment + its confidence; for the edge CV layer it's the rule that
+// fired. Returns "" when no justification was recorded (legacy incidents).
+function aiJustificationHtml(inc){
+  if(!inc.ai_justification) return "";
+  const conf = (inc.ai_confidence !== null && inc.ai_confidence !== undefined)
+    ? `<span class="pchip">${Math.round(inc.ai_confidence)}% model confidence</span>` : "";
+  const src = inc.detection_source === "ai_vision"
+      ? "Claude Haiku 4.5 (live camera vision)"
+    : inc.detection_source === "sfd_911" ? "Seattle Fire Dept 911 dispatch"
+    : "Edge computer-vision layer";
+  return `<details class="aiwhy"><summary>Why was this classified as
+    "${esc(inc.type.replace(/_/g," "))}"?</summary>
+    <div class="aibody">
+      <div class="planchips" style="margin:2px 0 4px">
+        <span class="pchip">source: ${src}</span>${conf}
+        ${inc.camera_id?`<span class="pchip">cam ${esc(inc.camera_id)}</span>`:""}
+      </div>
+      <div class="lbl">AI classification rationale</div>
+      ${esc(inc.ai_justification)}
+    </div></details>`;
+}
+
+/* ---------- Incident-queue controls (time range / sort / paging / type) */
+
+function renderTypeBar(){
+  $("typebar").innerHTML =
+    `<span class="meta" style="align-self:center">Types:</span>` +
+    INCIDENT_TYPES.map(t=>
+      `<button class="fbtn ${typeOn[t]?"on":""}" onclick="toggleType('${t}')"
+        title="Show/hide ${t.replace(/_/g,' ')} incidents">
+        ${TYPE_LABELS[t]}</button>`).join("");
+}
+function toggleType(t){ typeOn[t] = !typeOn[t]; renderTypeBar(); loadIncidents(); }
+window.toggleType = toggleType;
+
+function onRangeChange(){
+  const v = $("q_range").value;
+  incidentQuery.range = v;
+  $("queuecontrols").classList.toggle("absmode", v === "abs");
+  loadIncidents();
+}
+window.onRangeChange = onRangeChange;
+
+// Fetch the incident queue from the server with the active time range, sort
+// order, page size, and type filters. Stores the page in `queueIncidents`
+// and re-renders. The "Traffic" category filter still gates the whole queue.
+async function loadIncidents(){
+  if(!SESSION) return;
+  const range = $("q_range") ? $("q_range").value : incidentQuery.range;
+  const order = $("q_order") ? $("q_order").value : "desc";
+  const limit = $("q_limit") ? $("q_limit").value : "25";
+  incidentQuery.range = range;
+  incidentQuery.order = order;
+  incidentQuery.limit = limit;
+  const params = new URLSearchParams();
+  params.set("order", order);
+  params.set("limit", limit);
+  if(range === "abs"){
+    const from = $("q_from").value, to = $("q_to").value;
+    if(from) params.set("since", Math.floor(new Date(from).getTime()/1000));
+    if(to)   params.set("until", Math.floor(new Date(to).getTime()/1000));
+  } else if(range !== "0"){
+    params.set("window", range);
+  }
+  const types = INCIDENT_TYPES.filter(t=>typeOn[t]);
+  if(types.length && types.length < INCIDENT_TYPES.length)
+    params.set("types", types.join(","));
+  // If every type is OFF, there's nothing to show.
+  if(!types.length){ queueIncidents = []; queueTotal = 0; renderIncidents(); return; }
+  try{
+    const r = await api("/api/incidents?" + params.toString());
+    queueIncidents = r.incidents || [];
+    queueTotal = r.total || 0;
+    renderIncidents();
+  }catch(e){ /* transient — keep last page */ }
+}
+window.loadIncidents = loadIncidents;
+
 function renderIncidents(){
   const wrap = $("incidents");
-  const incidents = filterOn.traffic_incidents ? (status_?.incidents||[]) : [];
+  // The "Traffic" category filter gates the whole platform-incident queue;
+  // the per-type filters + time range are applied server-side in loadIncidents.
+  const incidents = filterOn.traffic_incidents ? (queueIncidents||[]) : [];
   const plans = status_?.plans || [];
   const emVisible = emergencies.filter(
     e=>filterOn[emFilterKey(e.category)] ?? true);
+  // Result count for the current query window.
+  const qc = $("q_count");
+  if(qc) qc.textContent = filterOn.traffic_incidents
+    ? `${incidents.length}${queueTotal>incidents.length?" of "+queueTotal:""} incident${incidents.length===1?"":"s"}`
+    : "traffic filter off";
   if(!incidents.length && !emVisible.length){
-    wrap.innerHTML = `<p class="meta">No events match the current filters.</p>
-      <p class="meta" style="margin-top:6px">Click any intersection on the map to view
-      its live camera, run AI vision analysis, or inject a scenario. Or:</p>
+    wrap.innerHTML = `<p class="meta">No incidents match the current time range / type filters.</p>
+      <p class="meta" style="margin-top:6px">Widen the time range above, or click any
+      intersection on the map to view its live camera, run AI vision analysis,
+      or inject a scenario. Or:</p>
       <button class="primary" style="margin-top:8px" onclick="busy(this, injectDemo)">
         ⚡ Inject demo collision (random downtown intersection)</button>`;
     return;
@@ -997,12 +1162,12 @@ function renderIncidents(){
   incidents.forEach(inc=>{
     const plansFor = plans.filter(p=>p.incident_id===inc.id);
     const latest = plansFor[0];
-    const name = interName(inc.intersection_id);
-    const cams = camByIntersection[inc.intersection_id] || [];
-    const liveCam = cams.find(c=>c.live);
+    const name = inc.intersection_name || interName(inc.intersection_id);
     const sc = sevColor(inc.severity);
     const aiChip = inc.detection_source === "ai_vision"
-      ? `<span class="pchip warn" title="Detected autonomously by the AI vision sweep (Claude Haiku on live camera frames)">👁 AI-detected</span>` : "";
+      ? `<span class="pchip warn" title="Detected autonomously by the AI vision sweep (Claude Haiku on live camera frames)">👁 AI-detected</span>`
+      : inc.detection_source === "sfd_911"
+      ? `<span class="pchip warn" title="Raised from a Seattle Fire Dept Real-Time 911 dispatch">🚨 911</span>` : "";
     html += `<div class="card" style="border-left:3px solid ${sc}">
       <h3 style="display:flex;align-items:center;gap:6px">
         ⚠ ${inc.type.replace(/_/g," ").toUpperCase()}${aiChip}
@@ -1013,18 +1178,22 @@ function renderIncidents(){
         <span class="meta">severity</span>
         <span class="sevbar"><i style="width:${(inc.severity*100).toFixed(0)}%;background:${sc}"></i></span>
         <span class="meta" style="color:${sc};font-weight:700">${(inc.severity*100).toFixed(0)}%</span>
-        <span class="meta" style="margin-left:auto" title="${fmtTime(inc.detected_at)}">detected ${fmtAgo(inc.detected_at)}</span>
+        <span class="meta" style="margin-left:auto" title="${fmtTime(inc.detected_at)}">${fmtTime(inc.detected_at)} · ${fmtAgo(inc.detected_at)}</span>
       </div>
       <details class="why"><summary>Detection detail</summary>
         <div class="whytext">${inc.description}${inc.acknowledged_by?`<br>acknowledged by ${inc.acknowledged_by}`:""}</div></details>
+      ${aiJustificationHtml(inc)}
       ${incidentTimeline(inc)}`;
-    if(liveCam){
-      html += `<img class="camthumb" src="/api/camera?id=${liveCam.id}&token=${encodeURIComponent(TOKEN)}&t=${Math.floor(Date.now()/30000)}"
-        alt="Live camera at ${name}" title="Click to expand"
+    // FROZEN detection-time frame — what the detector actually saw (NOT a
+    // newer live image). Falls back to nothing if no frame was captured.
+    if(inc.has_detection_frame){
+      html += `<img class="camthumb" src="/api/incident/frame?id=${encodeURIComponent(inc.id)}&token=${encodeURIComponent(TOKEN)}"
+        alt="Detection-time frame for ${name}" title="Frame captured at detection time — click to expand"
         onclick="this.classList.toggle('expanded')"
         onerror="this.style.display='none'">
+        <span class="frozen-tag" title="This is the exact camera frame at the moment of detection (${fmtTime(inc.detected_at)}), not the latest live image.">📌 frame frozen at detection · ${fmtTime(inc.detected_at)}</span>
         <div class="row" style="gap:0">
-          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))">👁 AI verify camera</button>
+          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))">👁 Re-check live camera now</button>
         </div>
         <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
     }
@@ -1039,6 +1208,7 @@ function renderIncidents(){
     }
     html += `</div>`;
   });
+
   // 911 events (Citizen-style) appear below platform incidents, compact,
   // click-to-locate on the map. Traffic-impacting calls first.
   if(emVisible.length){
@@ -1455,9 +1625,11 @@ function renderHeader(){
 async function refresh(){
   try{
     [status_, grid] = await Promise.all([api("/api/status"), api("/api/grid")]);
-    renderHeader(); renderMap(); renderIncidents(); renderSafety();
+    renderHeader(); renderMap(); renderSafety();
     renderAlerts(); renderAudit(); renderFilterBar();
+    await loadIncidents();   // fetches the filtered queue, then renders it
     fetchEmergencies();   // 60s-throttled internally
+
     fetchVisionStatus();  // 30s-throttled internally
     if(panelTab==="analytics") fetchAnalytics();   // 60s-throttled
   }catch(e){ /* transient */ }
@@ -1480,6 +1652,8 @@ document.addEventListener("keydown", e=>{
 initMap();
 renderUser();
 renderNotifToggle();
+renderTypeBar();
+
 if(CF_ACCESS){
   // Cloudflare Access handled sign-in at the edge — no in-app login.
   bootstrapAccess();

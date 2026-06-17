@@ -135,6 +135,21 @@ class PlatformRuntime:
                 return (f"911 (SFD live, last hour, {len(rows)} "
                         f"dispatches): {lines}\n")
             self.engine.copilot.extra_context_fn = _emergency_context
+
+            # Freeze a detection-time frame for edge/911 incidents (the AI
+            # vision sweep already attaches its own). Maps the platform
+            # camera_id → live_id and pulls the current jpeg once.
+            cam_map_for_capture = getattr(
+                self.adapter, "live_camera_map", {}) or {}
+
+            def _capture_frame(camera_id: str):
+                meta = cam_map_for_capture.get(camera_id)
+                if not meta:
+                    return None
+                result = live.camera_image(meta["live_id"])
+                return result[0] if result else None
+            self.engine.frame_capture_fn = _capture_frame
+
         # Resolve real road paths for traffic-flow rendering (OSRM, cached
         # on disk; straight-line fallback until each path resolves).
         geom_cache = Path(db_path).parent / "road_geometry.json" \
@@ -551,7 +566,63 @@ def make_handler(runtime: PlatformRuntime):
                     self._send_json({"user_id": principal["sub"],
                                      "role": principal["role"],
                                      "expires_at": principal["exp"]})
+                elif route == "/api/incidents":
+                    # Filtered / sorted / paginated Incident Queue feed.
+                    # Query params (all optional):
+                    #   since, until : epoch seconds (absolute time range)
+                    #   window       : seconds back from now (relative range;
+                    #                  ignored if `since` is given)
+                    #   types        : comma-separated IncidentType values
+                    #   sources      : comma-separated detection_source values
+                    #   active       : "1" to hide resolved/closed
+                    #   order        : "asc" | "desc" (by detection time)
+                    #   limit, offset: paging
+                    params = parse_qs(parsed.query)
+
+                    def _f(name):
+                        v = params.get(name, [""])[0]
+                        return float(v) if v not in ("", None) else None
+
+                    since = _f("since")
+                    until = _f("until")
+                    window = _f("window")
+                    if since is None and window:
+                        import time as _t
+                        since = _t.time() - window
+                    types = [t for t in params.get(
+                        "types", [""])[0].split(",") if t] or None
+                    sources = [s for s in params.get(
+                        "sources", [""])[0].split(",") if s] or None
+                    active_only = params.get("active", ["0"])[0] == "1"
+                    order = params.get("order", ["desc"])[0]
+                    limit = int(float(params.get("limit", ["50"])[0]))
+                    offset = int(float(params.get("offset", ["0"])[0]))
+                    self._send_json(engine.query_incidents(
+                        since=since, until=until, types=types,
+                        sources=sources, include_resolved=not active_only,
+                        order=order, limit=limit, offset=offset))
+                elif route == "/api/incident/frame":
+                    # Serve the FROZEN detection-time camera frame for an
+                    # incident (never the latest live image). 404 when the
+                    # incident has no captured frame.
+                    params = parse_qs(parsed.query)
+                    inc_id = params.get("id", [""])[0]
+                    frame = engine.incident_frame(inc_id)
+                    if not frame:
+                        self._send_json(
+                            {"error": "no detection-time frame for this "
+                                      "incident"}, 404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(frame)))
+                    # Frozen evidence is immutable — cache it hard.
+                    self.send_header("Cache-Control",
+                                     "private, max-age=86400, immutable")
+                    self.end_headers()
+                    self.wfile.write(frame)
                 else:
+
                     self._send_json({"error": "not found"}, 404)
             except AuthError as exc:
                 self._send_json({"error": str(exc)}, 401)

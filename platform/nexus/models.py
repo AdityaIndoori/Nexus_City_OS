@@ -189,6 +189,17 @@ class Incident:
     description: str = ""
     action_history: List[Dict[str, Any]] = field(default_factory=list)
     detection_source: str = "edge_simulator"   # "edge_simulator" | "ai_vision"
+    camera_id: str = ""                          # camera that produced the detection
+    # AI classification provenance (PRD §4.2): WHY the platform classified
+    # this activity as this incident type. Populated for AI-vision detections
+    # (the Claude Haiku assessment) and a deterministic explanation otherwise.
+    ai_justification: str = ""
+    ai_confidence: Optional[float] = None        # 0..100, model self-assessment
+    # The actual camera frame AT DETECTION TIME (jpeg bytes), frozen so the
+    # operator always sees what the detector saw — never the latest live image.
+    # Kept in memory only; never serialized into JSON status payloads.
+    detection_frame_jpeg: Optional[bytes] = field(default=None, repr=False)
+
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +299,13 @@ class EdgeTelemetry:
     anomaly: Optional[str]           # IncidentType value or None
     redacted: bool                   # must be True or the platform rejects it
     source: str = "edge_simulator"   # "edge_simulator" | "ai_vision"
+    # Classification provenance carried from the detector to the incident:
+    # the human-readable justification (the AI-vision assessment), the model's
+    # self-reported confidence, and the base64 jpeg of the frame the detector
+    # actually saw (frozen detection-time evidence).
+    ai_assessment: str = ""
+    ai_confidence: Optional[float] = None
+    frame_b64: Optional[str] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -295,6 +313,7 @@ class EdgeTelemetry:
     @staticmethod
     def from_json(raw: str) -> "EdgeTelemetry":
         data = json.loads(raw)
+        conf = data.get("ai_confidence")
         return EdgeTelemetry(
             camera_id=str(data["camera_id"]),
             intersection_id=str(data["intersection_id"]),
@@ -305,7 +324,12 @@ class EdgeTelemetry:
             anomaly=data.get("anomaly"),
             redacted=bool(data["redacted"]),
             source=str(data.get("source", "edge_simulator")),
+            ai_assessment=str(data.get("ai_assessment", "")),
+            ai_confidence=float(conf) if isinstance(conf, (int, float))
+            else None,
+            frame_b64=data.get("frame_b64"),
         )
+
 
 
 # Freshness thresholds in seconds (PRD §1, Data Freshness Requirements)
