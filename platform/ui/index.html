@@ -1384,8 +1384,14 @@ function renderIncidents(){
     html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
       letter-spacing:.5px">911 dispatches · ${esc(emLabel)} · SFD live</div>`;
 
+    // Honor the same Sort selector as the incident queue. Traffic-impacting
+    // calls still surface first; within each group, newest- or oldest-first
+    // follows the dropdown.
+    const _ord = ($("q_order") ? $("q_order").value : "desc");
+    const _dir = _ord === "asc" ? 1 : -1;
     const sorted = [...emVisible].sort((a,b)=>
-      (b.traffic_impacting - a.traffic_impacting) || (b.at - a.at));
+      (b.traffic_impacting - a.traffic_impacting) || (_dir * (b.at - a.at)));
+
     sorted.slice(0, 25).forEach(e=>{
       const color = EM_COLORS[e.category] || EM_COLORS.other;
       html += `<div class="card emcard" style="border-left:3px solid ${color};padding:6px 10px"
