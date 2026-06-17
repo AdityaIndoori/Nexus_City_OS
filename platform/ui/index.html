@@ -84,10 +84,36 @@
           background:#11264a; border-color:#1d4f8a;}
   /* incident queue filter bar */
   .filterbar{display:flex; gap:5px; padding:6px 12px; flex-wrap:wrap;
-             border-bottom:1px solid var(--line); flex:0 0 auto;}
+             border-bottom:1px solid var(--line); flex:0 0 auto;
+             align-items:center;}
   .fbtn{margin:0; padding:2px 10px; font-size:11px; border-radius:10px;
         background:var(--panel2);}
   .fbtn.on{background:#114a86; border-color:#1d6cc0; font-weight:700;}
+  /* multi-select checkbox dropdown (Categories / Incident types) */
+  .msdd{position:relative; display:inline-block;}
+  .msdd-btn{margin:0; padding:3px 10px; font-size:11px; border-radius:6px;
+            background:var(--panel2); display:inline-flex; align-items:center;
+            gap:6px; white-space:nowrap;}
+  .msdd-btn .cnt{color:var(--accent); font-weight:700;}
+  .msdd-btn::after{content:"▾"; font-size:9px; opacity:.7;}
+  .msdd.open .msdd-btn{background:#114a86; border-color:#1d6cc0;}
+  .msdd-panel{display:none; position:absolute; z-index:1300; top:calc(100% + 4px);
+              left:0; min-width:200px; background:var(--panel);
+              border:1px solid #2f447c; border-radius:8px; padding:6px;
+              box-shadow:0 8px 24px rgba(0,0,0,.5);}
+  .msdd.open .msdd-panel{display:block;}
+  .msdd-panel .msdd-quick{display:flex; gap:6px; padding:2px 4px 6px;
+              border-bottom:1px solid var(--line); margin-bottom:4px;}
+  .msdd-panel .msdd-quick a{font-size:10px; cursor:pointer; color:var(--accent);
+              text-transform:uppercase; letter-spacing:.4px;}
+  .msdd-opt{display:flex; align-items:center; gap:8px; padding:4px 6px;
+            border-radius:5px; cursor:pointer; font-size:12px;
+            color:var(--text);}
+  .msdd-opt:hover{background:var(--panel2);}
+  .msdd-opt input{width:14px; height:14px; accent-color:var(--accent);
+                  cursor:pointer;}
+  .msdd-opt .cnt{margin-left:auto; color:var(--dim); font-size:11px;}
+
   /* incident-queue controls (time range / sort / page size / types) */
   .qctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
         padding:6px 12px; border-bottom:1px solid var(--line);
@@ -338,6 +364,7 @@
     <div class="filterbar" id="filterbar" role="group" aria-label="Filter queue and map"></div>
     <div class="qctl" id="queuecontrols" role="group" aria-label="Incident queue time range, sort and paging">
       <label>Time range
+
         <select id="q_range" onchange="onRangeChange()" aria-label="Time range">
           <option value="900">Last 15 min</option>
           <option value="3600">Last 1 hour</option>
@@ -699,6 +726,67 @@ function toggleFilter(f){
 }
 window.toggleFilter = toggleFilter;
 
+/* ---------- compact multi-select checkbox dropdowns -------------------- */
+// One generic dropdown drives both the category filter (queue + map) and
+// the incident-type filter (server-side queue query). Replaces the two
+// rows of pill toggles with two tidy "Categories ▾ / Types ▾" dropdowns.
+let _msddOpen = null;   // id of the currently-open dropdown panel, or null
+
+// Render a single multi-select dropdown into the host element.
+//   host    : container element id
+//   label   : button label ("Categories" / "Incident types")
+//   keys    : array of option keys
+//   labels  : {key -> display label}
+//   state   : {key -> bool} (mutated in place)
+//   counts  : optional {key -> number} badge
+//   onChange: function(key) called after each checkbox toggle
+//   allFn   : window name of the "select all/none" handler
+function buildMsdd(host, label, keys, labels, state, counts, onChangeName, allFnName){
+  const on = keys.filter(k=>state[k]).length;
+  const total = keys.length;
+  const summary = on === total ? "All" : on === 0 ? "None" : `${on}/${total}`;
+  const opts = keys.map(k=>
+    `<label class="msdd-opt">
+      <input type="checkbox" ${state[k]?"checked":""}
+        onclick="event.stopPropagation();${onChangeName}('${k}')">
+      <span>${labels[k]}</span>
+      ${counts && counts[k] ? `<span class="cnt">${counts[k]}</span>` : ""}
+    </label>`).join("");
+  $(host).innerHTML =
+    `<div class="msdd ${_msddOpen===host?"open":""}" id="msdd_${host}">
+      <button class="msdd-btn" onclick="toggleMsdd('${host}')"
+        title="Filter by ${label.toLowerCase()}">
+        ${label} <span class="cnt">${summary}</span></button>
+      <div class="msdd-panel" onclick="event.stopPropagation()">
+        <div class="msdd-quick">
+          <a onclick="${allFnName}(true)">Select all</a>
+          <a onclick="${allFnName}(false)">Clear</a>
+        </div>
+        ${opts}
+      </div>
+    </div>`;
+}
+
+function toggleMsdd(host){
+  _msddOpen = (_msddOpen === host) ? null : host;
+  renderFilterBar(); renderTypeBar();
+}
+window.toggleMsdd = toggleMsdd;
+
+// Close any open dropdown when clicking elsewhere.
+document.addEventListener("click", e=>{
+  if(_msddOpen && !e.target.closest(".msdd")){
+    _msddOpen = null;
+    renderFilterBar(); renderTypeBar();
+  }
+});
+
+function setAllFilters(on){
+  FILTERS.forEach(f=>{ filterOn[f] = on; });
+  renderFilterBar(); renderEmergencies(); renderIncidents();
+}
+window.setAllFilters = setAllFilters;
+
 function renderFilterBar(){
   const counts = {};
   emergencies.forEach(e=>{
@@ -706,11 +794,10 @@ function renderFilterBar(){
     counts[k] = (counts[k]||0) + 1;
   });
   counts.traffic_incidents = (status_?.incidents||[]).length;
-  $("filterbar").innerHTML = FILTERS.map(f=>
-    `<button class="fbtn ${filterOn[f]?"on":""}" onclick="toggleFilter('${f}')"
-      title="Show/hide ${f.replace(/_/g,' ')} in queue and map">
-      ${FILTER_LABELS[f]}${counts[f]?` ${counts[f]}`:""}</button>`).join("");
+  buildMsdd("filterbar", "Categories", FILTERS, FILTER_LABELS,
+            filterOn, counts, "toggleFilter", "setAllFilters");
 }
+
 
 function locateMe(){
   if(!navigator.geolocation){ toast("Geolocation not available."); return; }
@@ -1099,16 +1186,19 @@ function aiJustificationHtml(inc){
 
 /* ---------- Incident-queue controls (time range / sort / paging / type) */
 
+function setAllTypes(on){
+  INCIDENT_TYPES.forEach(t=>{ typeOn[t] = on; });
+  renderTypeBar(); loadIncidents();
+}
+window.setAllTypes = setAllTypes;
+
 function renderTypeBar(){
-  $("typebar").innerHTML =
-    `<span class="meta" style="align-self:center">Types:</span>` +
-    INCIDENT_TYPES.map(t=>
-      `<button class="fbtn ${typeOn[t]?"on":""}" onclick="toggleType('${t}')"
-        title="Show/hide ${t.replace(/_/g,' ')} incidents">
-        ${TYPE_LABELS[t]}</button>`).join("");
+  buildMsdd("typebar", "Incident types", INCIDENT_TYPES, TYPE_LABELS,
+            typeOn, null, "toggleType", "setAllTypes");
 }
 function toggleType(t){ typeOn[t] = !typeOn[t]; renderTypeBar(); loadIncidents(); }
 window.toggleType = toggleType;
+
 
 function onRangeChange(){
   const v = $("q_range").value;
