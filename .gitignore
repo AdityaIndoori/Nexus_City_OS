@@ -1,6 +1,11 @@
 # Secrets — never commit
 llm_config.json
 
+# local cloudflared binary
+bin/
+start-nexus.ps1
+
+
 # Runtime state
 platform/data/*.db
 platform/data/*.db-wal

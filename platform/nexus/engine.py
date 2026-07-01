@@ -43,7 +43,23 @@ from .simulation import simulate_impact
 ADVISORY_EXPIRATION_S = 15 * 60.0       # PRD §5 instruction expiration
 AUTO_REVERT_WORSEN_PCT = 20.0           # PRD §6.2 (configurable)
 AUTO_REVERT_WINDOW_S = 5 * 60.0         # PRD §6.2 (configurable)
+# An alerted (worsening) change is held registered for operator action;
+# if no rollback happens within this hard cap it settles anyway so the
+# R6 concurrency budget is never permanently consumed.
+ALERTED_SETTLE_S = 30 * 60.0
 SPEED_ANOMALY_FRACTION = 0.15           # speed < 15% of limit ⇒ anomaly
+# Working-memory bounds (durable history lives in the Store).
+MAX_PLANS_IN_MEMORY = 400
+FRAME_RETENTION_AFTER_RESOLVE_S = 3600.0    # free frozen jpegs after 1 h
+INCIDENT_RETENTION_S = 7 * 86400.0          # drop resolved incidents > 7 d
+
+# Plans in one of these states are finished — safe to prune from memory.
+_TERMINAL_PLAN_STATUSES = {
+    PlanStatus.REJECTED, PlanStatus.REVERTED, PlanStatus.EXPIRED,
+    PlanStatus.SHADOW_LOGGED, PlanStatus.BLOCKED_CONSTRAINT,
+    PlanStatus.BLOCKED_HALLUCINATION, PlanStatus.SUPPRESSED_PROVENANCE,
+    PlanStatus.WITHHELD_CONFIDENCE,
+}
 
 
 class PermissionDenied(Exception):
@@ -197,6 +213,23 @@ class NexusEngine:
                           after_state={"mode": mode.value},
                           approval_chain=[user_id])
         self.emit_event("mode")
+
+    def set_confidence_threshold(self, user_id: str, value: float) -> float:
+        """Governed confidence-threshold adjustment (PRD §4.3): Admin-only,
+        range-checked by the SafetyGate, persisted, audit-logged."""
+        role = self._require(user_id, Role.ADMIN)
+        before = self.safety.confidence_threshold
+        self.safety.set_confidence_threshold(float(value),
+                                             actor_role=role.value)
+        if self.store is not None:
+            self.store.set_kv("confidence_threshold", float(value))
+        self.audit.record(actor=user_id,
+                          action="confidence_threshold_changed",
+                          before_state={"threshold": before},
+                          after_state={"threshold": float(value)},
+                          approval_chain=[user_id])
+        self.emit_event("threshold")
+        return float(value)
 
     # ------------------------------------------------------------------
     # Telemetry ingestion (Pipeline A)
@@ -435,6 +468,23 @@ class NexusEngine:
                 self.store.prune_history(now - 7 * 86400.0)
         except Exception:  # noqa: BLE001 — history must never break ticks
             pass
+        self._prune_incident_memory(now)
+
+    def _prune_incident_memory(self, now: float) -> None:
+        """Bound working-set memory on long-running deployments: free the
+        frozen detection-time jpeg an hour after resolution (the audit /
+        store record remains), and drop resolved incidents older than the
+        retention window from the in-memory graph (they stay in the Store
+        for analytics / discovery)."""
+        for inc in list(self.graph.incidents.values()):
+            if inc.state.value not in ("resolved", "closed"):
+                continue
+            resolved_at = inc.resolved_at or inc.detected_at
+            if (inc.detection_frame_jpeg is not None
+                    and now - resolved_at > FRAME_RETENTION_AFTER_RESOLVE_S):
+                inc.detection_frame_jpeg = None
+            if now - resolved_at > INCIDENT_RETENTION_S:
+                self.graph.incidents.pop(inc.id, None)
 
     # ------------------------------------------------------------------
     # Feed freshness (PRD §1)
@@ -658,9 +708,11 @@ class NexusEngine:
             if inc.state in (IncidentState.ACKNOWLEDGED,
                              IncidentState.DETECTED):
                 inc.state = IncidentState.MITIGATING
+                self._persist_incident(inc)
 
         with self._lock:
             self.plans[plan.plan_id] = plan
+        self._prune_plans()
 
         self.audit.record(
             actor="ai_copilot", action="recommendation_generated",
@@ -696,6 +748,8 @@ class NexusEngine:
             self.audit.record(actor=user_id, action="approval_blocked",
                               targets=plan.targets, outcome="blocked",
                               detail=plan.block_reason)
+            self._persist_plan(plan)
+            self.emit_event("plan")
             return plan
 
         plan.approved_by = user_id
@@ -713,6 +767,14 @@ class NexusEngine:
         plan = self.plans.get(plan_id)
         if plan is None:
             raise KeyError(f"Unknown plan {plan_id}")
+        # Only a plan awaiting approval can be rejected. Rejecting an
+        # EXECUTED plan would strand the live timing change with no
+        # rollback path (rollback requires status EXECUTED).
+        if plan.status != PlanStatus.PENDING_APPROVAL:
+            raise ValueError(
+                f"Plan {plan_id} is not pending approval "
+                f"(status: {plan.status.value}); cannot reject. "
+                f"Use rollback for executed plans.")
         plan.status = PlanStatus.REJECTED
         inc = self.graph.incidents.get(plan.incident_id)
         if inc is not None:
@@ -798,12 +860,49 @@ class NexusEngine:
         self.emit_event("plan")
         return plan
 
+    def expire_advisories(self) -> int:
+        """Flip ADVISORY_ISSUED plans past their 15-minute expiration to
+        EXPIRED (PRD §5). Called from the platform tick. Returns the number
+        expired this pass."""
+        now = now_ts()
+        with self._lock:
+            due = [p for p in self.plans.values()
+                   if p.status == PlanStatus.ADVISORY_ISSUED
+                   and p.expires_at and now > p.expires_at]
+        for plan in due:
+            plan.status = PlanStatus.EXPIRED
+            self.audit.record(
+                actor="system", action="advisory_expired",
+                targets=plan.targets,
+                detail="Advisory instruction expired unconfirmed after "
+                       "15 minutes (PRD §5); a fresh recommendation is "
+                       "required.")
+            self._persist_plan(plan)
+        if due:
+            self.emit_event("plan")
+        return len(due)
+
+    def _prune_plans(self) -> None:
+        """Bound the in-memory plan table: oldest finished plans are pruned
+        first (their durable snapshots remain in the Store)."""
+        with self._lock:
+            if len(self.plans) <= MAX_PLANS_IN_MEMORY:
+                return
+            terminal = sorted(
+                (p for p in self.plans.values()
+                 if p.status in _TERMINAL_PLAN_STATUSES),
+                key=lambda p: p.created_at)
+            excess = len(self.plans) - MAX_PLANS_IN_MEMORY
+            for p in terminal[:excess]:
+                self.plans.pop(p.plan_id, None)
+
     def advisory_instruction(self, plan_id: str) -> Dict[str, Any]:
         """Formatted instruction per PRD §5 Advisory Mode format."""
         plan = self.plans.get(plan_id)
         if plan is None:
             raise KeyError(f"Unknown plan {plan_id}")
-        if plan.status != PlanStatus.ADVISORY_ISSUED:
+        if plan.status not in (PlanStatus.ADVISORY_ISSUED,
+                               PlanStatus.EXPIRED):
             raise ValueError("Plan has no advisory instruction")
         lines = []
         for op in plan.operations:
@@ -874,15 +973,27 @@ class NexusEngine:
 
     def check_rollback_monitors(self) -> List[Dict[str, Any]]:
         """Automatic rollback monitoring (PRD §6.2): alert when congestion
-        worsens ≥ 20% within 5 minutes of execution."""
+        worsens ≥ 20% within 5 minutes of execution.
+
+        Lifecycle completion: once a change survives its monitoring window
+        without worsening, it SETTLES — the monitor is retired and the R6
+        active-change registration is cleared, returning the system-wide
+        concurrency budget. (Previously changes stayed registered forever
+        unless manually rolled back, eventually blocking every new plan and
+        leaking monitors.) Alerted changes are held for operator action,
+        then hard-settle after 30 minutes."""
         proposals: List[Dict[str, Any]] = []
+        settled: List[str] = []
         now = now_ts()
         with self._lock:
             monitors = dict(self._monitoring)
         for plan_id, monitor in monitors.items():
-            if monitor["alerted"]:
+            age = now - monitor["executed_at"]
+            if age > AUTO_REVERT_WINDOW_S:
+                if not monitor["alerted"] or age > ALERTED_SETTLE_S:
+                    settled.append(plan_id)
                 continue
-            if now - monitor["executed_at"] > AUTO_REVERT_WINDOW_S:
+            if monitor["alerted"]:
                 continue
             for target, baseline in monitor["baselines"].items():
                 inter = self.graph.get_intersection(target)
@@ -903,7 +1014,27 @@ class NexusEngine:
                     proposals.append({"plan_id": plan_id, "target": target,
                                       "worsening_pct": round(worsening, 1)})
                     break
+        for plan_id in settled:
+            self._settle_change(plan_id)
         return proposals
+
+    def _settle_change(self, plan_id: str) -> None:
+        """Retire a monitored change: free its R6 registration and monitor.
+        The plan stays EXECUTED (still manually revertible)."""
+        with self._lock:
+            monitor = self._monitoring.pop(plan_id, None)
+        if monitor is None:
+            return
+        plan = self.plans.get(plan_id)
+        targets = plan.targets if plan is not None \
+            else list(monitor["baselines"].keys())
+        for target in targets:
+            self.safety.verifier.clear_active_change(target)
+        self.audit.record(
+            actor="system", action="change_settled", targets=targets,
+            detail=f"Timing change {plan_id} completed its monitoring "
+                   f"window without reversion; active-change registration "
+                   f"cleared.")
 
     # ------------------------------------------------------------------
     # Status snapshot for the UI / API
@@ -928,6 +1059,6 @@ class NexusEngine:
             "confidence_threshold": self.safety.confidence_threshold,
             "active_changes": self.safety.verifier.active_changes(),
             "audit_entries": len(self.audit),
-            "audit_chain_intact": self.audit.verify_chain(),
+            "audit_chain_intact": self.audit.verify_chain_cached(),
             "dlq_count": self.bus.dlq_count,
         }

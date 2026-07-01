@@ -36,6 +36,14 @@ class AuditTrail:
         self._lock = threading.RLock()
         self._entries: List[Dict[str, Any]] = []
         self._store = store
+        # Incremental verification cursor: entries [0, _verified_upto) have
+        # already been proven intact. Because the chain is append-only and
+        # each entry embeds the previous hash, verifying only NEW entries is
+        # sound — a retroactive tamper of an old entry breaks the recomputed
+        # hash of the first unverified entry's prev link on the next full
+        # verify, and verify_chain() (full) remains available for audits.
+        self._verified_upto = 0
+        self._chain_ok = True
         if store is not None:
             self._entries = store.load_audit()
 
@@ -100,6 +108,35 @@ class AuditTrail:
                 if recomputed != entry["entry_hash"]:
                     return False
                 prev = entry["entry_hash"]
+            return True
+
+    def verify_chain_cached(self) -> bool:
+        """Incremental chain verification for hot paths (/api/status polls).
+
+        Full SHA-256 recomputation of a long-lived chain on EVERY status
+        request is O(n) per call and was the platform's biggest CPU sink.
+        This verifies only entries appended since the last check; once a
+        break is detected it latches False. ``verify_chain()`` still does
+        the full recomputation for forensic use."""
+        with self._lock:
+            if not self._chain_ok:
+                return False
+            start = self._verified_upto
+            prev = (self._entries[start - 1]["entry_hash"] if start > 0
+                    else GENESIS_HASH)
+            for entry in self._entries[start:]:
+                body = {k: v for k, v in entry.items() if k != "entry_hash"}
+                if body.get("prev_hash") != prev:
+                    self._chain_ok = False
+                    return False
+                recomputed = hashlib.sha256(
+                    json.dumps(body, sort_keys=True, default=str)
+                    .encode("utf-8")).hexdigest()
+                if recomputed != entry["entry_hash"]:
+                    self._chain_ok = False
+                    return False
+                prev = entry["entry_hash"]
+            self._verified_upto = len(self._entries)
             return True
 
     def export_jsonl(self) -> str:

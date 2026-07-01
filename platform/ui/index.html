@@ -293,6 +293,55 @@
   .hotbar{flex:0 0 54px; height:5px; border-radius:3px; background:#1c2945;
           overflow:hidden;}
   .hotbar i{display:block; height:100%; border-radius:3px;}
+
+  /* ---------------- Responsive / mobile (phones, Samsung Fold) ----------
+     The desktop layout is a fixed 2-col grid with a 430px side panel and a
+     3-col bottom strip. On narrow / foldable screens that overflows badly,
+     so below 900px we let the whole thing scroll vertically and stack the
+     panels full-width; below 560px (Fold outer screen) we tighten spacing
+     and collapse the bottom strip to one column. */
+  @media (max-width: 900px){
+    body{height:auto; min-height:100vh; overflow:auto;}
+    header{flex-wrap:wrap; gap:8px 10px; padding:8px 10px;}
+    header h1{font-size:15px;}
+    .spacer{flex-basis:100%; height:0;}
+    .feedchips{flex-wrap:wrap;}
+    main{display:flex; flex-direction:column; height:auto;
+         padding:6px; gap:8px;}
+    /* Give the map a usable fixed height instead of a grid row. */
+    #mappanel{grid-column:auto; grid-row:auto; height:56vh; min-height:300px;}
+    #map{min-height:240px;}
+    #sidepanel{grid-column:auto; grid-row:auto;
+               max-height:none; min-height:340px;}
+    #sidepanel .body{max-height:60vh;}
+    #bottompanels{display:flex; flex-direction:column; grid-column:auto;
+                  grid-row:auto; gap:8px;}
+    #bottompanels .panel{min-height:180px;}
+    #bottompanels .body{max-height:42vh;}
+    /* Popups and camera thumbnails must not exceed the viewport width. */
+    .popimg{width:auto; max-width:78vw;}
+  }
+  @media (max-width: 560px){
+    header h1{font-size:14px; width:100%;}
+    .modebadge,.databadge{font-size:10px; padding:2px 8px;}
+    main{padding:5px; gap:6px;}
+    #mappanel{height:48vh;}
+    .legend{gap:8px 10px; font-size:10px;}
+    .qctl{gap:6px;}
+    .qctl label{font-size:10px;}
+    /* Login card fits the Fold's narrow outer screen. */
+    #loginbox{width:92vw; max-width:360px; padding:22px 20px;}
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    /* Larger tap targets on touch screens. */
+    button{padding:6px 12px;}
+    .fbtn,.msdd-btn{padding:4px 11px;}
+  }
+  /* Foldable posture hints: react to very narrow OR hinge-split viewports. */
+  @media (max-width: 380px){
+    header h1 span{display:inline;}
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    .popimg{max-width:88vw;}
+  }
 </style>
 </head>
 <body>
@@ -422,7 +471,10 @@
       </div>
     </section>
     <section class="panel" aria-label="Audit trail">
-      <h2>Audit Trail <span id="chainstate"></span></h2>
+      <h2>Audit Trail <span id="chainstate"></span>
+        <a id="auditexport" href="#" onclick="exportAudit();return false"
+           style="float:right;text-transform:none;letter-spacing:0;font-size:11px"
+           title="Download the full hash-chained audit trail as JSONL (legal discovery export; admin/analyst only)">⬇ export</a></h2>
       <div class="body" id="audit"></div>
     </section>
   </div>
@@ -890,18 +942,31 @@ function notifyNewDispatches(){
 }
 
 let emLastFetch = 0;
+let emInFlight = false;
 async function fetchEmergencies(){
-  if(Date.now() - emLastFetch < 60000) return;   // 60s cadence
-  emLastFetch = Date.now();
+  // 60s cadence, but only throttle AFTER a successful fetch — a failed or
+  // still-empty first attempt must be retried by the next poll, never
+  // locked out for 60s (that was the "911 ×0" bug).
+  if(emInFlight) return;
+  if(emLastFetch && Date.now() - emLastFetch < 60000) return;
+  emInFlight = true;
   try{
     const r = await api("/api/emergencies?age=3600");
-    if(!r.available) return;
+    if(!r.available) return;              // adapter has no 911 feed (e.g. Tacoma)
     emergencies = r.emergencies || [];
     hazards = r.hazards || [];
+    emLastFetch = Date.now();             // mark success → start the 60s window
     notifyNewDispatches();
     renderEmergencies(); renderFilterBar(); renderIncidents();
-  }catch(e){ /* feed degraded — chips show health */ }
+  }catch(e){
+    // Feed transiently degraded — do NOT set emLastFetch, so the next
+    // refresh() poll (15s) retries instead of being throttled out.
+    console.warn("emergencies fetch failed, will retry:", e && e.message);
+  }finally{
+    emInFlight = false;
+  }
 }
+
 
 function renderEmergencies(){
   if(!map) return;
@@ -920,9 +985,9 @@ function renderEmergencies(){
       dashArray: "3,3",
     }).addTo(emLayer);
     const ago = fmtAgo(e.at);
-    m.bindTooltip(`${EM_ICONS[e.category]||"📟"} ${e.type} · ${ago}`);
-    m.bindPopup(`<b>${EM_ICONS[e.category]||"📟"} ${e.type}</b><br>
-      <span style="color:#8fa3c2">${e.address} · dispatched ${ago}<br>
+    m.bindTooltip(`${EM_ICONS[e.category]||"📟"} ${esc(e.type)} · ${ago}`);
+    m.bindPopup(`<b>${EM_ICONS[e.category]||"📟"} ${esc(e.type)}</b><br>
+      <span style="color:#8fa3c2">${esc(e.address)} · dispatched ${ago}<br>
       SFD Real-Time 911 · ${e.traffic_impacting?"⚠ likely traffic impact":"no expected traffic impact"}</span>`);
     emMarkers[e.id] = m;
   });
@@ -941,14 +1006,14 @@ function popupHtml(inter){
     .map(i=>i.camera_id)[0];
   const liveCam = (incCamId && cams.find(c=>c.live && c.id===incCamId))
                   || cams.find(c=>c.live);
-  let html = `<b>${inter.name}</b><br>
+  let html = `<b>${esc(inter.name)}</b><br>
     <span style="color:#8fa3c2">${inter.id} · congestion ${(inter.congestion*100).toFixed(0)}%`
     + (inter.ems_corridor ? " · EMS corridor" : "") + `</span><br>`;
   if(liveCam){
     const box = "camb_"+liveCam.id;
     html += `<div id="${box}">
-      <img class="popimg" alt="Live camera: ${liveCam.live_name||inter.name}">
-      <span class="caminfo" style="color:#8fa3c2;font-size:11px">LIVE ${(liveCam.live_type||'sdot').toUpperCase()} camera · ${liveCam.live_name||""}<br>loading frame…</span><br>
+      <img class="popimg" alt="Live camera: ${esc(liveCam.live_name||inter.name)}">
+      <span class="caminfo" style="color:#8fa3c2;font-size:11px">LIVE ${esc((liveCam.live_type||'sdot').toUpperCase())} camera · ${esc(liveCam.live_name||"")}<br>loading frame…</span><br>
       <button onclick="busy(this,()=>loadCamFrame('${liveCam.id}','${box}',true))">⟳ Refresh feed</button>
       <button onclick="busy(this,()=>aiAnalyze('${inter.id}','${box}'))">🤖 AI vision analysis</button>
       <div class="aiout" style="font-size:11px;color:#8fa3c2;margin-top:4px"></div>
@@ -970,10 +1035,10 @@ async function aiAnalyze(iid, boxId){
     if(out) out.innerHTML =
       `<div class="planchips" style="margin:2px 0 4px">
         <span class="pchip ${inc?"warn":"good"}">incident: ${inc?"YES":"none"}</span>
-        <span class="pchip">congestion: ${a.congestion_visible}</span>
-        <span class="pchip">visibility: ${a.visibility}</span>
+        <span class="pchip">congestion: ${esc(a.congestion_visible)}</span>
+        <span class="pchip">visibility: ${esc(a.visibility)}</span>
         <span class="pchip">${Math.round(a.confidence_pct)}% conf</span>
-      </div>${a.assessment}`;
+      </div>${esc(a.assessment)}`;
   }catch(e){ if(out) out.textContent = "Vision analysis failed: "+e.message; }
 }
 window.aiAnalyze = aiAnalyze;
@@ -1134,9 +1199,9 @@ const visionCache = {};   // incident_id -> html
 function visionHtml(a){
   return `<div class="planchips" style="margin:3px 0">
       <span class="pchip ${a.incident_visible?"warn":"good"}">visual incident: ${a.incident_visible?"CONFIRMED":"not visible"}</span>
-      <span class="pchip">congestion: ${a.congestion_visible}</span>
+      <span class="pchip">congestion: ${esc(a.congestion_visible)}</span>
       <span class="pchip">${Math.round(a.confidence_pct)}% conf</span>
-    </div>${a.assessment}`;
+    </div>${esc(a.assessment)}`;
 }
 async function aiVerifyIncident(iid, incId){
   const outId = "aiv_" + incId;
@@ -1336,7 +1401,7 @@ function renderIncidents(){
         ⚠ ${inc.type.replace(/_/g," ").toUpperCase()}${aiChip}
         <span class="state" style="margin-left:auto">${inc.state}</span></h3>
       <div style="font-size:13px;color:var(--text);cursor:pointer"
-        title="Show on map" onclick="focusIntersection('${inc.intersection_id}')">📍 ${name}</div>
+        title="Show on map" onclick="focusIntersection('${inc.intersection_id}')">📍 ${esc(name)}</div>
       <div class="sevwrap">
         <span class="meta">severity</span>
         <span class="sevbar"><i style="width:${(inc.severity*100).toFixed(0)}%;background:${sc}"></i></span>
@@ -1398,11 +1463,11 @@ function renderIncidents(){
         onclick="focusEmergency('${e.id}')" title="Show on map">
         <div style="display:flex;align-items:center;gap:6px;font-size:12px">
           <span>${EM_ICONS[e.category]||"📟"}</span>
-          <b>${e.type}</b>
+          <b>${esc(e.type)}</b>
           ${e.traffic_impacting?'<span class="pchip warn">traffic impact</span>':""}
           <span class="meta" style="margin-left:auto" title="${fmtTime(e.at)}">${fmtAgo(e.at)}</span>
         </div>
-        <div class="meta">📍 ${e.address}</div>
+        <div class="meta">📍 ${esc(e.address)}</div>
       </div>`;
     });
   }
@@ -1479,7 +1544,7 @@ function renderPlan(p, inc){
   }
   // rationale tucked behind a toggle
   html += `<details class="why"><summary>Why this recommendation</summary>
-    <div class="whytext">${p.justification}</div></details>`;
+    <div class="whytext">${esc(p.justification)}</div></details>`;
   // compact outcome chips
   let chips = "";
   if(p.simulation){
@@ -1507,6 +1572,9 @@ function renderPlan(p, inc){
              <button class="danger" onclick="busy(this,()=>rollback('${p.plan_id}'))">↩ Revert <span style="opacity:.55">Ctrl+Shift+R</span></button>`;
   } else if(p.status==="reverted"){
     html += `<div class="meta">↩ Reverted to previous timing plan</div>`;
+  } else if(p.status==="expired"){
+    html += `<div class="meta" style="color:var(--warn)">⌛ Advisory instruction EXPIRED unconfirmed (15 min) — request a fresh recommendation</div>
+             <button onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Expired Instruction</button>`;
   }
   html += `</div>`;
   return html;
@@ -1542,6 +1610,28 @@ async function showInstruction(id){
 window.ack=ack; window.recommend=recommend; window.approve=approve;
 window.reject=reject; window.rollback=rollback; window.resolveInc=resolveInc;
 window.showInstruction=showInstruction;
+
+// Download the full hash-chained audit trail as JSONL (PRD §11.3 legal
+// discovery export). Server enforces admin/analyst; surface a clear toast
+// for other roles.
+async function exportAudit(){
+  try{
+    const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
+    const r = await fetch("/api/audit/export", {headers});
+    if(!r.ok){
+      const d = await r.json().catch(()=>({}));
+      throw new Error(d.error || r.statusText);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "nexus-audit.jsonl";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    toast("Audit trail exported (JSONL) — export itself is audit-logged.");
+  }catch(e){ toast("Export failed: "+e.message); }
+}
+window.exportAudit = exportAudit;
 
 function esc(t){ const d=document.createElement("div"); d.textContent=t; return d.innerHTML; }
 
@@ -1710,9 +1800,24 @@ function renderSafety(){
           `<button class="${status_.mode===md?"on":""}"
             ${isAdmin?`onclick="busy(this,()=>setMode('${md}'))"`:"disabled"}>${md}</button>`).join("")}
       </span>
-      <span class="meta" style="margin-left:auto">conf. threshold <b style="color:var(--accent)">${status_.confidence_threshold}%</b></span>
+      <span class="meta" style="margin-left:auto" title="Plans below this composite confidence are withheld (PRD §4.3). Governed range 50–95; admin-only.">conf. threshold
+        ${isAdmin
+          ? `<input id="thrin" type="number" min="50" max="95" step="1"
+               value="${Math.round(status_.confidence_threshold)}"
+               style="width:56px;padding:1px 4px;font-size:11px"
+               onchange="setThreshold(this.value)" aria-label="Confidence threshold">%`
+          : `<b style="color:var(--accent)">${status_.confidence_threshold}%</b>`}
+      </span>
     </div>` + visionLine();
 }
+async function setThreshold(v){
+  try{
+    await api("/api/threshold", {value: parseFloat(v)});
+    toast(`Confidence threshold set to ${v}% (admin-authorized, audit-logged)`);
+    await refresh();
+  }catch(e){ toast("Error: "+e.message); refresh(); }
+}
+window.setThreshold = setThreshold;
 async function setMode(md){
   try{ await api("/api/mode",{mode:md});
     toast("Mode set to "+md.toUpperCase()+" (admin-authorized, audit-logged)");
@@ -1724,11 +1829,11 @@ function renderAlerts(){
   let html = "";
   // NWS hazard alerts pinned at the top (911 events live in the queue).
   (hazards||[]).forEach(h=>{
-    html += `<div class="alert critical"><b>⚠ NWS: ${h.event}</b>
-      · ${h.severity}<br>${h.headline}</div>`;
+    html += `<div class="alert critical"><b>⚠ NWS: ${esc(h.event)}</b>
+      · ${esc(h.severity)}<br>${esc(h.headline)}</div>`;
   });
   html += alerts.map(a=>`<div class="alert ${a.priority}">
-        <b>${a.kind.replace(/_/g," ")}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${a.message}</div>`).join("");
+        <b>${esc(a.kind.replace(/_/g," "))}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${esc(a.message)}</div>`).join("");
   $("alerts").innerHTML = html;
 }
 

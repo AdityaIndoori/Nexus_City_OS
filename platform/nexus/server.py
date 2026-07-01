@@ -83,7 +83,7 @@ DEFAULT_DB = _os.environ.get(
 
 
 # Routes that do not require a session token.
-PUBLIC_ROUTES = {"/", "/index.html", "/api/login"}
+PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz"}
 
 # Multi-city adapter registry (Phase 4 — City Adapter SDK).
 CITY_ADAPTERS = {
@@ -258,6 +258,7 @@ class PlatformRuntime:
         engine.graph.set_weather(self.adapter.poll_weather())
         engine.touch_feed("weather")
         engine.touch_feed("closures")
+        engine.expire_advisories()   # PRD §5: 15-min advisory expiration
         proposals = engine.check_rollback_monitors()
         engine.emit_event("tick")   # push grid refresh to SSE clients
         return {"telemetry_emitted": len(emitted),
@@ -403,6 +404,14 @@ def make_handler(runtime: PlatformRuntime):
             parsed = urlparse(self.path)
             route = parsed.path
             try:
+                if route == "/healthz":
+                    # Lightweight unauthenticated liveness probe for load
+                    # balancers / Render health checks — avoids rendering
+                    # the full UI on every probe.
+                    self._send_json({"ok": True,
+                                     "mode": engine.mode.value,
+                                     "city": engine.city_id})
+                    return
                 if route in ("/", "/index.html"):
                     html = UI_PATH.read_text(encoding="utf-8")
                     # Inject the Turnstile *site* key (public, safe to embed)
@@ -555,18 +564,44 @@ def make_handler(runtime: PlatformRuntime):
                     age = float(params.get("age", ["3600"])[0])
                     rows = live.emergencies(max_age_s=age)
                     self._send_json({
+
                         "available": True,
                         "emergencies": rows,
                         "hazards": live.hazard_alerts(),
                         "source": "Seattle Fire Dept Real-Time 911 "
                                   "(data.seattle.gov) + NWS alerts",
                     })
+
                 elif route == "/api/audit":
                     self._send_json({
                         "entries": engine.audit.entries(limit=100),
-                        "chain_intact": engine.audit.verify_chain(),
+                        "chain_intact": engine.audit.verify_chain_cached(),
                         "total": len(engine.audit),
                     })
+                elif route == "/api/audit/export":
+                    # Machine-readable JSONL export of the full hash-chained
+                    # audit trail (PRD §11.3 legal-discovery requirement).
+                    # Admin/analyst-gated: the export contains before/after
+                    # state for every governance action.
+                    if principal["role"] not in ("admin", "analyst"):
+                        self._send_json(
+                            {"error": "Audit export requires the admin or "
+                                      "analyst role."}, 403)
+                        return
+                    payload = engine.audit.export_jsonl().encode("utf-8")
+                    engine.audit.record(
+                        actor=principal["sub"], action="audit_exported",
+                        detail=f"{len(engine.audit)} entries exported")
+                    self.send_response(200)
+                    self.send_header("Content-Type",
+                                     "application/x-ndjson; charset=utf-8")
+                    self.send_header("Content-Disposition",
+                                     'attachment; filename="nexus-audit.jsonl"')
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "no-store")
+                    self._emit_security_headers()
+                    self.end_headers()
+                    self.wfile.write(payload)
                 elif route == "/api/cascade":
                     params = parse_qs(parsed.query)
                     iid = params.get("id", [""])[0]
@@ -823,6 +858,18 @@ def make_handler(runtime: PlatformRuntime):
                     engine.set_mode(user_id,
                                     OperatingMode(str(body.get("mode", ""))))
                     self._send_json({"mode": engine.mode.value})
+                elif route == "/api/threshold":
+                    # Governed confidence-threshold adjustment (PRD §4.3).
+                    # Admin-only; range enforced by the SafetyGate.
+                    value = float(body.get("value", 0))
+                    try:
+                        engine.set_confidence_threshold(user_id, value)
+                    except PermissionError as exc:
+                        self._send_json({"error": str(exc)}, 403)
+                        return
+                    self._send_json(
+                        {"confidence_threshold":
+                         engine.safety.confidence_threshold})
                 elif route == "/api/copilot/query":
                     result = engine.copilot.query(
                         user_id, str(body.get("text", "")))

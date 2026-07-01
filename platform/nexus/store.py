@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS congestion_history (
     at              REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ch_at ON congestion_history(at);
+-- Analytics queries filter incidents/plans by updated_at; without these
+-- indexes each /api/analytics call was a full table scan.
+CREATE INDEX IF NOT EXISTS idx_inc_updated ON incidents(updated_at);
+CREATE INDEX IF NOT EXISTS idx_plans_updated ON plans(updated_at);
 """
 
 

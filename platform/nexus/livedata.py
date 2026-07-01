@@ -135,14 +135,25 @@ def _pacific_naive_to_epoch(ts: str) -> float:
 
 
 class _Cached:
-    """Thread-safe TTL cache around a fetch function with stale fallback."""
+    """Thread-safe TTL cache around a fetch function with stale fallback.
 
-    def __init__(self, fetch, ttl_s: float) -> None:
+    Failure backoff: after a fetch error, further refetch attempts are
+    suppressed for ``error_backoff_s`` (stale value / None is returned
+    immediately). Without this, a feed outage made EVERY caller re-attempt
+    the blocking network fetch — request threads could stall for the full
+    socket timeout on each call. A single-flight guard additionally ensures
+    only one thread refreshes at a time; others get the stale value."""
+
+    def __init__(self, fetch, ttl_s: float,
+                 error_backoff_s: float = 15.0) -> None:
         self._fetch = fetch
         self._ttl = ttl_s
+        self._error_backoff = error_backoff_s
         self._lock = threading.Lock()
+        self._refresh_lock = threading.Lock()
         self._value: Any = None
         self._fetched_at: float = 0.0
+        self._last_attempt_at: float = 0.0
         self.last_error: Optional[str] = None
         self.last_success_at: Optional[float] = None
 
@@ -151,18 +162,32 @@ class _Cached:
             now = time.time()
             if self._value is not None and now - self._fetched_at < self._ttl:
                 return self._value
-        try:
-            value = self._fetch()
-        except Exception as exc:  # noqa: BLE001 — degrade, never crash
+            # Failure backoff: don't hammer a broken feed.
+            if (self.last_error is not None
+                    and now - self._last_attempt_at < self._error_backoff):
+                return self._value
+        # Single-flight: only one thread performs the (blocking) refresh;
+        # concurrent callers return the stale value immediately.
+        if not self._refresh_lock.acquire(blocking=False):
             with self._lock:
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                return self._value  # stale or None — caller handles
-        with self._lock:
-            self._value = value
-            self._fetched_at = time.time()
-            self.last_success_at = self._fetched_at
-            self.last_error = None
-            return value
+                return self._value
+        try:
+            with self._lock:
+                self._last_attempt_at = time.time()
+            try:
+                value = self._fetch()
+            except Exception as exc:  # noqa: BLE001 — degrade, never crash
+                with self._lock:
+                    self.last_error = f"{type(exc).__name__}: {exc}"
+                    return self._value  # stale or None — caller handles
+            with self._lock:
+                self._value = value
+                self._fetched_at = time.time()
+                self.last_success_at = self._fetched_at
+                self.last_error = None
+                return value
+        finally:
+            self._refresh_lock.release()
 
 
 class SeattleLiveData:
@@ -201,6 +226,7 @@ class SeattleLiveData:
         self._hazards = _Cached(self._fetch_hazard_alerts, ttl_s=300.0)
         self._flow = _Cached(self._fetch_flow, ttl_s=60.0)
         self._image_cache: Dict[str, Tuple[float, bytes, str]] = {}
+        self._image_cache_max = 150   # LRU-ish bound (~a few MB of JPEGs)
         self._image_lock = threading.Lock()
 
     # -- camera registry (real SDOT/WSDOT cameras) -----------------------
@@ -434,6 +460,14 @@ class SeattleLiveData:
         fetched_at = time.time()
         with self._image_lock:
             self._image_cache[camera_id] = (fetched_at, payload, content_type)
+            # Bound the cache: evict oldest frames beyond the cap so a
+            # citywide camera sweep can't grow memory without limit.
+            if len(self._image_cache) > self._image_cache_max:
+                oldest = sorted(self._image_cache.items(),
+                                key=lambda kv: kv[1][0])
+                for cam_id, _ in oldest[:len(self._image_cache)
+                                        - self._image_cache_max]:
+                    self._image_cache.pop(cam_id, None)
         return payload, content_type, fetched_at
 
     # -- health -----------------------------------------------------------

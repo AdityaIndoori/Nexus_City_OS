@@ -79,7 +79,11 @@ class Authenticator:
             self._secret = os.urandom(32)
             store.set_kv("auth_signing_key", self._secret.hex())
         self._lock = threading.RLock()
-        self._revoked: set = set()
+        # jti -> token exp: entries self-expire (a revoked token past its
+        # expiry is rejected by the exp check anyway), so the set can't
+        # grow unbounded on a long-running deployment.
+        self._revoked: Dict[str, float] = {}
+        self._revoked_last_prune = 0.0
         self._failures: Dict[str, list] = {}   # user_id -> [ts, ...]
         self._bootstrap_defaults()
 
@@ -187,9 +191,21 @@ class Authenticator:
         if payload.get("exp", 0) < time.time():
             raise AuthError("Session expired.")
         with self._lock:
+            self._prune_revoked()
             if payload.get("jti") in self._revoked:
                 raise AuthError("Session revoked.")
         return payload
+
+    def _prune_revoked(self) -> None:
+        """Drop revocation entries whose tokens have expired (must be
+        called with the lock held; throttled to once a minute)."""
+        now = time.time()
+        if now - self._revoked_last_prune < 60.0:
+            return
+        self._revoked_last_prune = now
+        expired = [jti for jti, exp in self._revoked.items() if exp < now]
+        for jti in expired:
+            self._revoked.pop(jti, None)
 
     def revoke_token(self, token: str) -> None:
         try:
@@ -197,7 +213,8 @@ class Authenticator:
         except AuthError:
             return
         with self._lock:
-            self._revoked.add(payload.get("jti"))
+            self._revoked[payload.get("jti")] = float(
+                payload.get("exp", time.time() + TOKEN_TTL_S))
 
     def login(self, user_id: str, password: str) -> Dict[str, Any]:
         role = self.verify_credentials(user_id, password)

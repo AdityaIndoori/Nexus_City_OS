@@ -411,14 +411,21 @@ class Copilot:
                   if i.state.value not in ("resolved", "closed")]
         slow = [v for v in graph.vehicles.values() if v.speed_mph < 8.0]
         w = graph.weather
-        context = (
-            "LIVE CITY CONTEXT (Seattle):\n"
-            f"Weather: {w.condition}, {w.temperature_f:.0f}F\n" if w else ""
-        )
+
+        def _iname(iid: str) -> str:
+            inter = graph.intersections.get(iid)
+            return inter.name if inter is not None else iid
+
+        # NOTE: the header must not depend on weather availability (the old
+        # conditional expression silently dropped the ENTIRE context header
+        # when weather was None, ungrounding the chat model).
+        context = "LIVE CITY CONTEXT (Seattle):\n"
+        if w:
+            context += f"Weather: {w.condition}, {w.temperature_f:.0f}F\n"
         context += (
             f"Active incidents ({len(active)}): " + "; ".join(
                 f"{i.type.value} at "
-                f"{graph.get_intersection(i.intersection_id).name} "
+                f"{_iname(i.intersection_id)} "
                 f"(severity {i.severity:.0%}, state {i.state.value})"
                 for i in active[:8]) + "\n"
             f"Most congested: " + "; ".join(
