@@ -536,7 +536,9 @@ let grid = null, status_ = null;
 let map = null, interLayer = null, vehLayer = null, emLayer = null,
     segLayer = null;
 const segLines = {};          // segment id -> polyline
+const wazeJamLines = {};      // waze jam id -> polyline
 let emergencies = [], hazards = [];
+let highwayAlerts = [], wazeAlerts = [], wazeJams = [];
 const layerOn = {traffic:true, bus:true, em:true, cams:true};
 // Queue/map category filters: which event classes are visible.
 const FILTERS = ["traffic_incidents","fire","mva","medical","rescue",
@@ -957,9 +959,13 @@ async function fetchEmergencies(){
     if(!r.available) return;              // adapter has no 911 feed (e.g. Tacoma)
     emergencies = r.emergencies || [];
     hazards = r.hazards || [];
+    highwayAlerts = r.highway_alerts || [];
+    wazeAlerts = r.waze_alerts || [];
+    wazeJams = r.waze_jams || [];
     emLastFetch = Date.now();             // mark success → start the 60s window
     notifyNewDispatches();
-    renderEmergencies(); renderFilterBar(); renderIncidents();
+    renderEmergencies(); renderWazeJams(); renderAlerts();
+    renderFilterBar(); renderIncidents();
   }catch(e){
     // Feed transiently degraded — do NOT set emLastFetch, so the next
     // refresh() poll (15s) retries instead of being throttled out.
@@ -995,6 +1001,35 @@ function renderEmergencies(){
   });
   for(const id of Object.keys(emMarkers)){
     if(!seen.has(id)){ emLayer.removeLayer(emMarkers[id]); delete emMarkers[id]; }
+  }
+}
+
+// Waze crowdsourced jam polylines (purple dashed) — part of the Traffic
+// layer, drawn over the segment flow lines. Empty until the Waze for
+// Cities partner feed (NEXUS_WAZE_FEED_URL) is configured server-side.
+function renderWazeJams(){
+  if(!map || !segLayer) return;
+  const seen = new Set();
+  (wazeJams||[]).forEach(j=>{
+    if(!j.line || j.line.length < 2) return;
+    seen.add(j.id);
+    let line = wazeJamLines[j.id];
+    if(!line){
+      line = L.polyline(j.line, {color:"#b06cff", weight:5, opacity:.85,
+                                 dashArray:"6,6"}).addTo(segLayer);
+      wazeJamLines[j.id] = line;
+    }
+    const speed = j.speed_mph!==null && j.speed_mph!==undefined
+      ? `${j.speed_mph} mph` : "blocked";
+    line.bindTooltip(
+      `〰 Waze jam · ${esc(j.street||"")} · ${speed} · `
+      + `+${Math.round((j.delay_s||0)/60)} min · level ${j.level}/5`,
+      {sticky:true});
+  });
+  for(const id of Object.keys(wazeJamLines)){
+    if(!seen.has(id)){
+      segLayer.removeLayer(wazeJamLines[id]); delete wazeJamLines[id];
+    }
   }
 }
 
@@ -1705,7 +1740,14 @@ async function fetchAnalytics(){
     analyticsData = await api("/api/analytics?hours=24");
     renderAnalytics();
   }catch(e){ /* tolerated */ }
+  // WSDOT corridor travel times (independent fetch, tolerated on failure)
+  try{
+    const t = await api("/api/traveltimes");
+    travelTimes = t.travel_times || [];
+    renderAnalytics();
+  }catch(e){ /* tolerated */ }
 }
+let travelTimes = [];
 
 function congBarColor(v){
   return v>0.7 ? "var(--bad)" : v>0.45 ? "var(--warn)" : "var(--good)";
@@ -1757,6 +1799,22 @@ function renderAnalytics(){
     ${Object.entries(ic).map(([t,n])=>`<span class="pchip">⚠ ${n} ${t.replace(/_/g," ")}</span>`).join("")}
     ${a.vision_sweep?.incidents_confirmed?`<span class="pchip warn">👁 ${a.vision_sweep.incidents_confirmed} AI-detected</span>`:""}
   </div>`;
+  // WSDOT corridor travel times — current vs typical, slowest first.
+  // Empty until WSDOT_ACCESS_CODE is configured server-side.
+  if(travelTimes.length){
+    html += `<div class="meta" style="margin-top:7px;text-transform:uppercase;
+      letter-spacing:.5px">Corridor travel times · WSDOT live</div>`;
+    travelTimes.slice(0,6).forEach(t=>{
+      const ratio = t.ratio || 1;
+      const color = ratio>1.5 ? "var(--bad)" : ratio>1.15 ? "var(--warn)"
+        : "var(--good)";
+      html += `<div class="hotrow" title="${esc(t.name)} · ${t.distance_miles.toFixed(1)} mi · typical ${Math.round(t.average_minutes)} min">
+        <b style="color:${color};min-width:52px">${Math.round(t.current_minutes)} min</b>
+        <span class="meta">${ratio>1?"+"+Math.round((ratio-1)*100)+"%":"typical"}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🛣 ${esc(t.name)}</span>
+      </div>`;
+    });
+  }
   el.innerHTML = html;
 }
 
@@ -1834,6 +1892,21 @@ function renderAlerts(){
     html += `<div class="alert critical"><b>⚠ NWS: ${esc(h.event)}</b>
       · ${esc(h.severity)}<br>${esc(h.headline)}</div>`;
   });
+  // WSDOT highway alerts (collisions/closures/construction) — highest
+  // priority first; empty until WSDOT_ACCESS_CODE is configured.
+  (highwayAlerts||[]).slice(0,6).forEach(a=>{
+    const cls = (a.priority==="Highest"||a.priority==="High")
+      ? "high" : "";
+    html += `<div class="alert ${cls}"><b>🛣 WSDOT: ${esc(a.category)}</b>
+      · ${esc(a.road)}${a.updated_at?` · <span title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span>`:""}<br>${esc(a.headline)}</div>`;
+  });
+  // Waze crowdsourced reports (accidents/hazards), most reliable first —
+  // empty until the Waze for Cities feed is configured.
+  [...(wazeAlerts||[])].sort((a,b)=>b.reliability-a.reliability)
+    .slice(0,6).forEach(w=>{
+      html += `<div class="alert"><b>〰 Waze: ${esc(w.type)}${w.subtype?` · ${esc(w.subtype.replace(/_/g," ").toLowerCase())}`:""}</b>
+        · reliability ${w.reliability}/10<br>${esc(w.street||"")}${w.at?` · <span title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span>`:""}</div>`;
+    });
   html += alerts.map(a=>`<div class="alert ${a.priority}">
         <b>${esc(a.kind.replace(/_/g," "))}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${esc(a.message)}</div>`).join("");
   $("alerts").innerHTML = html;

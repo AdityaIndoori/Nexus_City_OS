@@ -48,6 +48,10 @@ services:
       # alone.
       - key: WSDOT_ACCESS_CODE
         sync: false
+      # Waze for Cities (CCP) partner feed URL (jams + alerts). Optional;
+      # leave unset until the Waze data-sharing application is approved.
+      - key: NEXUS_WAZE_FEED_URL
+        sync: false
       # --- Public-edge security hardening ------------------------------
       # Behind Cloudflare/Render the real client IP arrives in
       # CF-Connecting-IP / X-Forwarded-For, so trust proxy headers for the

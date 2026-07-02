@@ -184,6 +184,42 @@ class CongestionEstimator:
                 count += 1
         return count
 
+    def ingest_waze_jams(self, jams: List[Dict[str, Any]],
+                         now: Optional[float] = None) -> int:
+        """Feed Waze for Cities crowdsourced jam records as probe samples.
+
+        Each jam carries a polyline and an observed speed; every polyline
+        vertex near a tracked intersection contributes a weight-2 sample
+        (crowdsourced probes: stronger than a lone bus, weaker than a loop
+        detector). Jams measure general traffic → raw speed limit. A jam
+        with level 5 (road blocked) or no speed reads as a 1 mph crawl."""
+        now = now if now is not None else time.time()
+        count = 0
+        for j in jams:
+            speed = j.get("speed_mph")
+            if not isinstance(speed, (int, float)) or speed <= 0:
+                speed = 1.0 if int(j.get("level") or 0) >= 4 else None
+            if speed is None:
+                continue
+            jam_id = str(j.get("id", ""))
+            seen_here: Set[str] = set()
+            for point in j.get("line", []) or []:
+                try:
+                    lat, lon = float(point[0]), float(point[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+                for iid in self._intersections_near(lat, lon):
+                    if iid in seen_here:
+                        continue
+                    seen_here.add(iid)
+                    free_flow = self._free_flow_mph(iid, is_bus=False)
+                    if not free_flow:
+                        continue
+                    self._add_sample(iid, f"waze:{jam_id}",
+                                     float(speed) / free_flow, 2.0, now)
+                    count += 1
+        return count
+
     def ingest_flow(self, flows: List[Dict[str, Any]],
                     now: Optional[float] = None) -> int:
         """Feed optional WSDOT flow records ``{lat, lon, speed_mph, ...}``
@@ -242,13 +278,17 @@ class CongestionEstimator:
             # data → higher confidence. WSDOT loops alone are authoritative;
             # a lone bus pair is a weak directional signal.
             has_flow = any(sid.startswith("flow:") for sid in fresh)
+            has_waze = any(sid.startswith("waze:") for sid in fresh)
             n_sources = len(fresh)
             confidence = min(1.0, 0.35 + 0.18 * n_sources
-                             + (0.25 if has_flow else 0.0))
+                             + (0.25 if has_flow else 0.0)
+                             + (0.15 if has_waze else 0.0))
+            kind = ("loop+probe" if has_flow
+                    else "waze+probe" if has_waze else "bus_probe")
             self._meta[iid] = {
                 "confidence": round(confidence, 2),
                 "n_sources": n_sources,
-                "kind": "loop+probe" if has_flow else "bus_probe",
+                "kind": kind,
             }
         return results
 

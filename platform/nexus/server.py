@@ -243,6 +243,12 @@ class PlatformRuntime:
                     self.congestion.ingest_flow(live.flow_speeds())
                 except Exception:  # noqa: BLE001 — degrade, never crash
                     pass
+                # Waze crowdsourced jams (when the CCP partner feed is
+                # configured) join as weight-2 probe samples.
+                try:
+                    self.congestion.ingest_waze_jams(live.waze_jams())
+                except Exception:  # noqa: BLE001 — degrade, never crash
+                    pass
             self.congestion.compute()
             self.congestion.apply(engine.graph)
             # M2 — auto-correlate traffic-impacting 911 dispatches to the
@@ -568,8 +574,23 @@ def make_handler(runtime: PlatformRuntime):
                         "available": True,
                         "emergencies": rows,
                         "hazards": live.hazard_alerts(),
+                        # WSDOT highway alerts (collisions/closures) and the
+                        # Waze CCP feed (jams + crowdsourced reports). Empty
+                        # lists when the feeds aren't configured.
+                        "highway_alerts": live.highway_alerts(),
+                        "waze_alerts": live.waze_alerts(),
+                        "waze_jams": live.waze_jams(),
                         "source": "Seattle Fire Dept Real-Time 911 "
                                   "(data.seattle.gov) + NWS alerts",
+                    })
+                elif route == "/api/traveltimes":
+                    # WSDOT corridor travel times (current vs typical).
+                    live = getattr(runtime.adapter, "live", None)
+                    rows = live.travel_times() if live else []
+                    self._send_json({
+                        "available": bool(rows),
+                        "travel_times": rows[:40],
+                        "source": "WSDOT Traveler Information API",
                     })
 
                 elif route == "/api/audit":

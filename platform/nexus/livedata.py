@@ -52,8 +52,144 @@ NWS_ALERTS_URL = "https://api.weather.gov/alerts/active?point=47.61,-122.33"
 WSDOT_FLOW_URL = ("https://wsdot.wa.gov/Traffic/api/TrafficFlow/"
                   "TrafficFlowREST.svc/GetTrafficFlowsAsJson"
                   "?AccessCode={code}")
+WSDOT_TRAVELTIMES_URL = ("https://wsdot.wa.gov/Traffic/api/TravelTimes/"
+                         "TravelTimesREST.svc/GetTravelTimesAsJson"
+                         "?AccessCode={code}")
+WSDOT_ALERTS_URL = ("https://wsdot.wa.gov/Traffic/api/HighwayAlerts/"
+                    "HighwayAlertsREST.svc/GetAlertsAsJson"
+                    "?AccessCode={code}")
 # WSDOT FlowReadingValue (1=free, 2=moderate, 3=heavy, 4=stop&go) → mph
 WSDOT_FLOW_SPEEDS = {1: 55.0, 2: 40.0, 3: 25.0, 4: 10.0}
+KMH_TO_MPH = 0.621371
+
+
+def _waze_feed_url() -> str:
+    """Waze for Cities (CCP) partner feed URL — a georss JSON endpoint
+    issued to data-sharing partners, containing crowdsourced "jams" and
+    "alerts". Read at call time so a deployment can set it without a code
+    change; empty disables the feed."""
+    return os.environ.get("NEXUS_WAZE_FEED_URL", "").strip()
+
+
+def _dotnet_date_to_epoch(raw: Any) -> Optional[float]:
+    """Parse the WSDOT '/Date(1633033200000-0700)/' .NET stamp → epoch s."""
+    try:
+        s = str(raw)
+        start = s.index("(") + 1
+        digits = ""
+        for ch in s[start:]:
+            if ch.isdigit() or (ch == "-" and not digits):
+                digits += ch
+            else:
+                break
+        return int(digits) / 1000.0
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return None
+
+
+def parse_travel_times(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize WSDOT TravelTimes rows → corridor cards. CurrentTime 0 or
+    negative means 'no data' and is dropped."""
+    out: List[Dict[str, Any]] = []
+    for r in rows or []:
+        try:
+            current = float(r.get("CurrentTime") or 0)
+            average = float(r.get("AverageTime") or 0)
+        except (TypeError, ValueError):
+            continue
+        if current <= 0:
+            continue
+        out.append({
+            "id": str(r.get("TravelTimeID", "")),
+            "name": str(r.get("Description") or r.get("Name") or ""),
+            "distance_miles": float(r.get("Distance") or 0),
+            "current_minutes": current,
+            "average_minutes": average,
+            # >1 means slower than typical; the UI colors on this.
+            "ratio": round(current / average, 2) if average > 0 else None,
+            "updated_at": _dotnet_date_to_epoch(r.get("TimeUpdated")),
+        })
+    out.sort(key=lambda t: -(t["ratio"] or 0))
+    return out
+
+
+def parse_highway_alerts(rows: List[Dict[str, Any]],
+                         bbox: Optional[Tuple[float, float, float, float]]
+                         = None) -> List[Dict[str, Any]]:
+    """Normalize WSDOT HighwayAlerts rows (collisions, closures, construction)
+    → alert cards, optionally filtered to a bounding box."""
+    out: List[Dict[str, Any]] = []
+    for r in rows or []:
+        loc = r.get("StartRoadwayLocation") or {}
+        try:
+            lat = float(loc.get("Latitude") or 0)
+            lon = float(loc.get("Longitude") or 0)
+        except (TypeError, ValueError):
+            lat = lon = 0.0
+        if bbox is not None and lat and lon:
+            lat_min, lat_max, lon_min, lon_max = bbox
+            if not (lat_min <= lat <= lat_max and lon_min <= lon <= lon_max):
+                continue
+        out.append({
+            "id": str(r.get("AlertID", "")),
+            "category": str(r.get("EventCategory", "")),
+            "priority": str(r.get("Priority", "")),
+            "headline": str(r.get("HeadlineDescription", ""))[:300],
+            "road": str(loc.get("RoadName", "")),
+            "lat": lat, "lon": lon,
+            "updated_at": _dotnet_date_to_epoch(r.get("LastUpdatedTime")),
+            "source": "wsdot_highway_alerts",
+        })
+    priority_rank = {"Highest": 0, "High": 1, "Medium": 2, "Low": 3,
+                     "Lowest": 4}
+    out.sort(key=lambda a: priority_rank.get(a["priority"], 5))
+    return out
+
+
+def parse_waze_feed(data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Parse a Waze for Cities (CCP) georss JSON payload into normalized
+    ``jams`` (speed + polyline) and ``alerts`` (crowdsourced reports)."""
+    jams: List[Dict[str, Any]] = []
+    for j in (data or {}).get("jams", []) or []:
+        line = [(float(p.get("y", 0)), float(p.get("x", 0)))
+                for p in j.get("line", []) or []
+                if isinstance(p, dict)]
+        if not line:
+            continue
+        speed_kmh = j.get("speedKMH")
+        if not isinstance(speed_kmh, (int, float)):
+            # older feeds carry "speed" in m/s
+            ms = j.get("speed")
+            speed_kmh = float(ms) * 3.6 if isinstance(ms, (int, float)) \
+                else None
+        jams.append({
+            "id": str(j.get("uuid") or j.get("id") or len(jams)),
+            "street": str(j.get("street") or ""),
+            "speed_mph": (round(float(speed_kmh) * KMH_TO_MPH, 1)
+                          if speed_kmh is not None else None),
+            "level": int(j.get("level") or 0),        # 0..5 (5 = blocked)
+            "delay_s": int(j.get("delay") or 0),
+            "line": line,                              # [(lat, lon), ...]
+        })
+    alerts: List[Dict[str, Any]] = []
+    for a in (data or {}).get("alerts", []) or []:
+        loc = a.get("location") or {}
+        try:
+            lat = float(loc.get("y", 0))
+            lon = float(loc.get("x", 0))
+        except (TypeError, ValueError):
+            continue
+        alerts.append({
+            "id": str(a.get("uuid") or a.get("id") or len(alerts)),
+            "type": str(a.get("type", "")),            # ACCIDENT / HAZARD / JAM…
+            "subtype": str(a.get("subtype", "")),
+            "street": str(a.get("street") or ""),
+            "lat": lat, "lon": lon,
+            "reliability": int(a.get("reliability") or 0),   # 0..10
+            "at": float(a.get("pubMillis") or 0) / 1000.0,
+            "source": "waze",
+        })
+    return {"jams": jams, "alerts": alerts}
 
 # SFD dispatch type → category + whether it plausibly impacts traffic.
 # (Real-Time 911 types observed in the live feed.)
@@ -225,6 +361,9 @@ class SeattleLiveData:
         self._emergencies = _Cached(self._fetch_emergencies, ttl_s=60.0)
         self._hazards = _Cached(self._fetch_hazard_alerts, ttl_s=300.0)
         self._flow = _Cached(self._fetch_flow, ttl_s=60.0)
+        self._traveltimes = _Cached(self._fetch_travel_times, ttl_s=120.0)
+        self._hwalerts = _Cached(self._fetch_highway_alerts, ttl_s=120.0)
+        self._waze = _Cached(self._fetch_waze, ttl_s=120.0)
         self._image_cache: Dict[str, Tuple[float, bytes, str]] = {}
         self._image_cache_max = 150   # LRU-ish bound (~a few MB of JPEGs)
         self._image_lock = threading.Lock()
@@ -417,6 +556,63 @@ class SeattleLiveData:
             return []
         return self._flow.get() or []
 
+    # -- WSDOT corridor travel times + highway alerts (same access code) ----
+
+    @staticmethod
+    def _wsdot_code() -> str:
+        return os.environ.get("WSDOT_ACCESS_CODE", "").strip()
+
+    def _fetch_travel_times(self) -> List[Dict[str, Any]]:
+        code = self._wsdot_code()
+        if not code:
+            return []
+        return parse_travel_times(
+            _fetch_json(WSDOT_TRAVELTIMES_URL.format(code=code)))
+
+    def travel_times(self) -> List[Dict[str, Any]]:
+        """WSDOT corridor travel times (current vs average minutes).
+        Empty when no WSDOT_ACCESS_CODE is configured."""
+        if not self._wsdot_code():
+            return []
+        return self._traveltimes.get() or []
+
+    def _fetch_highway_alerts(self) -> List[Dict[str, Any]]:
+        code = self._wsdot_code()
+        if not code:
+            return []
+        return parse_highway_alerts(
+            _fetch_json(WSDOT_ALERTS_URL.format(code=code)),
+            bbox=(47.0, 48.2, -123.0, -121.5))   # Puget Sound region
+
+    def highway_alerts(self) -> List[Dict[str, Any]]:
+        """WSDOT highway alerts (collisions, closures, construction) in the
+        region. Empty when no WSDOT_ACCESS_CODE is configured."""
+        if not self._wsdot_code():
+            return []
+        return self._hwalerts.get() or []
+
+    # -- Waze for Cities (CCP) partner feed ---------------------------------
+
+    def _fetch_waze(self) -> Dict[str, List[Dict[str, Any]]]:
+        url = _waze_feed_url()
+        if not url:
+            return {"jams": [], "alerts": []}
+        return parse_waze_feed(_fetch_json(url))
+
+    def waze_jams(self) -> List[Dict[str, Any]]:
+        """Crowdsourced Waze traffic jams (speed + polyline). Empty when
+        NEXUS_WAZE_FEED_URL is not configured."""
+        if not _waze_feed_url():
+            return []
+        return (self._waze.get() or {}).get("jams", [])
+
+    def waze_alerts(self) -> List[Dict[str, Any]]:
+        """Crowdsourced Waze incident reports (accidents, hazards). Empty
+        when NEXUS_WAZE_FEED_URL is not configured."""
+        if not _waze_feed_url():
+            return []
+        return (self._waze.get() or {}).get("alerts", [])
+
     # -- NWS active hazard alerts ------------------------------------------
 
     def _fetch_hazard_alerts(self) -> List[Dict[str, Any]]:
@@ -512,5 +708,35 @@ class SeattleLiveData:
                     "state": "enabled",
                     "error": self._flow.last_error,
                     "last_success_at": self._flow.last_success_at,
+                }),
+            "wsdot_traveltimes": (
+                {"ok": True, "state": "disabled",
+                 "error": None, "last_success_at": None}
+                if not self._wsdot_code()
+                else {
+                    "ok": self._traveltimes.last_error is None,
+                    "state": "enabled",
+                    "error": self._traveltimes.last_error,
+                    "last_success_at": self._traveltimes.last_success_at,
+                }),
+            "wsdot_highway_alerts": (
+                {"ok": True, "state": "disabled",
+                 "error": None, "last_success_at": None}
+                if not self._wsdot_code()
+                else {
+                    "ok": self._hwalerts.last_error is None,
+                    "state": "enabled",
+                    "error": self._hwalerts.last_error,
+                    "last_success_at": self._hwalerts.last_success_at,
+                }),
+            "waze": (
+                {"ok": True, "state": "disabled",
+                 "error": None, "last_success_at": None}
+                if not _waze_feed_url()
+                else {
+                    "ok": self._waze.last_error is None,
+                    "state": "enabled",
+                    "error": self._waze.last_error,
+                    "last_success_at": self._waze.last_success_at,
                 }),
         }
