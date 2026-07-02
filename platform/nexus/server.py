@@ -828,7 +828,7 @@ def make_handler(runtime: PlatformRuntime):
                     self._send_json(result)
                 elif route == "/api/incident/analyze":
                     # AI VISION: triage the live camera frame at an
-                    # intersection (Claude Haiku 4.5 multimodal).
+                    # intersection (Claude Sonnet 4.6 multimodal).
                     iid = str(body.get("intersection_id", ""))
                     if not engine.graph.has_intersection(iid):
                         raise KeyError(f"Unknown intersection {iid}")

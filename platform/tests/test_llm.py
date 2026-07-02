@@ -111,7 +111,7 @@ class TestLLMRefinement(unittest.TestCase):
                                return_value=good):
             plan = h.engine.recommend(inc.id)
         self.assertEqual(h.engine.copilot.last_generator,
-                         "llm (claude-sonnet-4.5)")
+                         "llm (claude-sonnet-4.6)")
         self.assertIn("sonnet", plan.model_version)
         # the LLM-refined plan still went through the SafetyGate
         self.assertEqual(plan.status, PlanStatus.PENDING_APPROVAL)

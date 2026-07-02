@@ -86,8 +86,8 @@ class Copilot:
     """Recommendation engine + grounded query interface.
 
     With ``use_llm=True`` (default), plan rationale/operations come from the
-    production LLM (Claude Sonnet 4.5) and operator chat from Claude Haiku
-    4.5 — both behind strict schema validation, with the deterministic
+    production LLM (Claude Sonnet 4.6) and operator chat from Claude Sonnet
+    4.6 — both behind strict schema validation, with the deterministic
     expert system as an always-available fallback. The SafetyGate downstream
     re-verifies everything regardless of generator.
     """
@@ -209,7 +209,7 @@ class Copilot:
             confidence=confidence,
         )
 
-        # LLM enhancement: Claude Sonnet 4.5 may refine operations and write
+        # LLM enhancement: Claude Sonnet 4.6 may refine operations and write
         # the operator-facing rationale. Strictly validated; deterministic
         # plan stands on any failure. SafetyGate re-verifies downstream.
         if self.use_llm and self.llm is not None:
@@ -299,11 +299,11 @@ class Copilot:
             plan.confidence.model_certainty = round(
                 0.5 * plan.confidence.model_certainty
                 + 0.5 * float(certainty), 1)
-        plan.model_version = MODEL_VERSION + "+sonnet-4.5"
-        self.last_generator = "llm (claude-sonnet-4.5)"
+        plan.model_version = MODEL_VERSION + "+sonnet-4.6"
+        self.last_generator = "llm (claude-sonnet-4.6)"
 
     # ------------------------------------------------------------------
-    # Vision: live camera frame analysis (Claude Haiku 4.5)
+    # Vision: live camera frame analysis (Claude Sonnet 4.6)
     # ------------------------------------------------------------------
 
     def analyze_frame(self, image_jpeg: bytes,
@@ -392,7 +392,7 @@ class Copilot:
 
     def query(self, operator_id: str, text: str) -> Dict[str, Any]:
         """Answer a grounded query against the city model. Uses the chat
-        LLM (Claude Haiku 4.5) with live city context; falls back to the
+        LLM (Claude Sonnet 4.6) with live city context; falls back to the
         deterministic keyword answers when the model is unreachable."""
         self._enforce_rate_limit(operator_id)
         self._sanitize(operator_id, text)

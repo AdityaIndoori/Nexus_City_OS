@@ -5,13 +5,13 @@ Connects the platform to production LLMs through an OpenAI-compatible
 gateway, using only the stdlib. Three use-cases, each mapped to the most
 appropriate model:
 
-  PLANNER  → Claude Sonnet 4.5   deep traffic-engineering reasoning for
+  PLANNER  → Claude Sonnet 4.6   deep traffic-engineering reasoning for
                                   ActionPlan generation (highest stakes,
                                   quality over latency)
-  VISION   → Claude Haiku 4.5    live SDOT camera-frame incident
-                                  verification (fast multimodal triage)
-  CHAT     → Claude Haiku 4.5    operator natural-language queries
-                                  (low latency, grounded context)
+  VISION   → Claude Sonnet 4.6   live SDOT camera-frame incident
+                                  verification (multimodal triage)
+  CHAT     → Claude Sonnet 4.6   operator natural-language queries
+                                  (grounded context)
 
 ARCHITECTURAL INVARIANT (PRD §4): the LLM is *never trusted*. It can only
 propose structured operations that are schema-validated here, and every
@@ -53,9 +53,10 @@ def _load_llm_config() -> tuple:
 
 LLM_BASE_URL, LLM_API_KEY = _load_llm_config()
 
-MODEL_PLANNER = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-MODEL_VISION = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-MODEL_CHAT = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+# Newest Sonnet available on the gateway (verified: responds end-to-end).
+MODEL_PLANNER = "us.anthropic.claude-sonnet-4-6"
+MODEL_VISION = "us.anthropic.claude-sonnet-4-6"
+MODEL_CHAT = "us.anthropic.claude-sonnet-4-6"
 
 REQUEST_TIMEOUT_S = 45.0
 
