@@ -396,7 +396,7 @@
       <span class="meta">Layers:</span>
       <span class="lyrtoggle" id="lyr_traffic" onclick="toggleLayer('traffic')" title="Traffic flow: green free / amber congested / red severe (lines follow real road paths)">
         <span class="dot" style="background:var(--good)"></span><span class="dot" style="background:var(--warn);margin-left:-7px"></span><span class="dot" style="background:var(--bad);margin-left:-7px"></span>Traffic <span class="tg">☑</span></span>
-      <span title="Live SDOT/WSDOT traffic cameras currently tracked">📷 <b id="camcount" style="color:var(--accent)">0</b> cams</span>
+      <span class="lyrtoggle" id="lyr_cams" onclick="toggleLayer('cams')" title="Camera intersections (click a marker for the live feed). Live SDOT/WSDOT traffic cameras currently tracked.">📷 <b id="camcount" style="color:var(--accent)">0</b> cams <span class="tg">☑</span></span>
       <span class="lyrtoggle" id="lyr_bus" onclick="toggleLayer('bus')" title="Live KC Metro buses currently tracked">
         <span class="dot" style="background:#62d0ff"></span>Buses <b id="buscount" style="color:#62d0ff">0</b> <span class="tg">☑</span></span>
 
@@ -537,7 +537,7 @@ let map = null, interLayer = null, vehLayer = null, emLayer = null,
     segLayer = null;
 const segLines = {};          // segment id -> polyline
 let emergencies = [], hazards = [];
-const layerOn = {traffic:true, bus:true, em:true};
+const layerOn = {traffic:true, bus:true, em:true, cams:true};
 // Queue/map category filters: which event classes are visible.
 const FILTERS = ["traffic_incidents","fire","mva","medical","rescue",
                  "hazmat","violence","other"];
@@ -761,7 +761,9 @@ function emFilterKey(cat){ return cat==="fire_alarm" ? "fire" : cat; }
 
 function toggleLayer(name){
   layerOn[name] = !layerOn[name];
-  const layers = {traffic:[segLayer, interLayer], bus:[vehLayer],
+  // "Traffic" = flow lines only; camera-intersection markers have their own
+  // toggle (unchecking Traffic used to hide the cameras too).
+  const layers = {traffic:[segLayer], cams:[interLayer], bus:[vehLayer],
                   em:[emLayer]}[name];
   layers.forEach(l=>{
     if(layerOn[name]) l.addTo(map); else map.removeLayer(l);
