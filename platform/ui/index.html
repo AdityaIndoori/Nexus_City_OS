@@ -6,346 +6,496 @@
 <title>Nexus City OS — Traffic Operations Center</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
+  /* ==================================================================
+     NEXUS CITY OS — industrial control-room design system
+     Strict 4px/8px grid · sharp corners · ANSI/ISO functional palette
+     (charcoal base, International Orange, Traffic Yellow, Highway
+     Sign Green) · enforced monospace for all real-time variables.
+     ================================================================== */
   :root{
-    --bg:#0b1020; --panel:#121a30; --panel2:#0e1528; --line:#22304f;
-    --text:#dce6f5; --dim:#8fa3c2; --accent:#4da3ff; --good:#3ddc84;
-    --warn:#ffb547; --bad:#ff5d5d; --crit:#ff3860;
+    --bg:#121417; --panel:#191C20; --panel2:#20242A; --line:#2E333A;
+    --ink:#E8EAED; --dim:#98A1AB;
+    --orange:#FF4F00; --yellow:#F7B500; --green:#00843D;
+    --green-t:#3BB273; --blue:#7FA6C9;
+    --mono:Consolas,"Cascadia Mono","Courier New",monospace;
   }
-  *{box-sizing:border-box; margin:0; padding:0;}
-  body{background:var(--bg); color:var(--text);
-       font:14px/1.45 "Segoe UI",system-ui,sans-serif; height:100vh;
+  *{box-sizing:border-box; margin:0; padding:0; border-radius:0;}
+  body{background:var(--bg); color:var(--ink);
+       font:13px/1.45 "Segoe UI",system-ui,sans-serif; height:100vh;
        display:flex; flex-direction:column; overflow:hidden;}
-  header{display:flex; align-items:center; gap:14px; padding:10px 16px;
-         background:var(--panel); border-bottom:1px solid var(--line);
-         flex:0 0 auto;}
-  header h1{font-size:16px; letter-spacing:.5px; white-space:nowrap;}
-  header h1 span{color:var(--accent);}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
   ::-webkit-scrollbar{width:8px; height:8px;}
-  ::-webkit-scrollbar-thumb{background:#243353; border-radius:4px;}
+  ::-webkit-scrollbar-thumb{background:#3A4048;}
   ::-webkit-scrollbar-track{background:transparent;}
-  .modebadge{padding:3px 12px; border-radius:12px; font-weight:700;
-             font-size:12px; text-transform:uppercase; letter-spacing:1px;}
-  .mode-shadow{background:#2a3656; color:#9db8e8; border:1px solid #41538a;}
-  .mode-advisory{background:#4d3a14; color:var(--warn); border:1px solid #806022;}
-  .mode-live{background:#15402a; color:var(--good); border:1px solid #1f6b44;}
-  .databadge{padding:3px 10px; border-radius:12px; font-size:11px;
-             font-weight:700; letter-spacing:.5px;}
-  .data-live{background:#10331f; color:var(--good); border:1px solid #1f6b44;}
-  .data-sim{background:#2a3656; color:#9db8e8; border:1px solid #41538a;}
+  a{color:var(--blue);}
+
+  /* -------- viewport edge flash: unacknowledged critical channel --- */
+  #edgeflash{position:fixed; inset:0; pointer-events:none; z-index:3000;
+             border:4px solid var(--orange); opacity:0;}
+  #edgeflash.on{animation:edgepulse 1s steps(2, jump-none) infinite;}
+  @keyframes edgepulse{0%{opacity:0;} 50%{opacity:1;} 100%{opacity:0;}}
+
+  /* -------- header -------------------------------------------------- */
+  header{display:flex; align-items:center; gap:12px; height:48px;
+         padding:0 16px; background:var(--panel);
+         border-bottom:2px solid var(--line); flex:0 0 auto;}
+  header h1{font-size:16px; letter-spacing:1px; white-space:nowrap;
+            font-weight:700;}
+  header h1 span{color:var(--orange);}
+  .modebadge{padding:4px 12px; font-weight:700; font-family:var(--mono);
+             font-size:13px; text-transform:uppercase; letter-spacing:1px;
+             border:1px solid var(--line);}
+  .mode-shadow{background:#20242A; color:var(--dim); border-color:#3A4048;}
+  .mode-advisory{background:#2A2410; color:var(--yellow);
+                 border-color:var(--yellow);}
+  .mode-live{background:#0E2418; color:var(--green-t);
+             border-color:var(--green);}
+  .databadge{padding:4px 8px; font-size:11px; font-weight:700;
+             letter-spacing:.5px; font-family:var(--mono);
+             border:1px solid var(--line);}
+  .data-live{background:#0E2418; color:var(--green-t);
+             border-color:var(--green);}
+  .data-sim{background:#20242A; color:var(--dim);}
   .spacer{flex:1;}
-  .feedchips{display:flex; gap:6px;}
-  .chip{padding:2px 9px; border-radius:10px; font-size:11px;
+  .feedchips{display:flex; gap:4px;}
+  .chip{padding:2px 8px; font-size:11px; font-family:var(--mono);
         border:1px solid var(--line); color:var(--dim);}
-  .chip.fresh{border-color:#1f6b44; color:var(--good);}
+  .chip.fresh{border-color:var(--green); color:var(--green-t);}
   .chip.fresh::before{content:"✓ ";}
-  .chip.amber{border-color:#806022; color:var(--warn);}
+  .chip.amber{border-color:var(--yellow); color:var(--yellow);}
   .chip.amber::before{content:"△ ";}
-  .chip.stale,.chip.missing{border-color:#7a2230; color:var(--bad);}
+  .chip.stale,.chip.missing{border-color:var(--orange); color:var(--orange);}
   .chip.stale::before,.chip.missing::before{content:"✕ ";}
-  main{flex:1; display:grid; grid-template-columns: 1fr 430px;
-       grid-template-rows: minmax(0,1fr) 225px; gap:8px; padding:8px;
+  #audiobtn{margin:0; padding:4px 8px; font-size:13px;}
+  #audiobtn.muted{color:var(--dim); opacity:.7;}
+
+  /* -------- main console grid --------------------------------------- */
+  main{flex:1; display:grid; grid-template-columns:minmax(0,1fr) 484px;
+       grid-template-rows:minmax(0,1fr) 232px; gap:8px; padding:8px;
        min-height:0;}
   .panel{background:var(--panel); border:1px solid var(--line);
-         border-radius:8px; display:flex; flex-direction:column;
-         min-height:0; overflow:hidden;}
+         display:flex; flex-direction:column; min-height:0; overflow:hidden;}
   .panel h2{font-size:12px; text-transform:uppercase; letter-spacing:1px;
-            color:var(--dim); padding:8px 12px;
+            color:var(--dim); padding:8px 12px; font-weight:700;
             border-bottom:1px solid var(--line); flex:0 0 auto;}
   .panel .body{flex:1; overflow-y:auto; padding:8px 12px; min-height:0;}
-  /* map */
+
+  /* -------- deterministic loading skeletons ------------------------- */
+  @keyframes skelpulse{0%,100%{opacity:.45;} 50%{opacity:.9;}}
+  .skel{height:48px; margin:8px 0; background:var(--panel2);
+        border:1px solid var(--line);
+        animation:skelpulse 1.2s ease-in-out infinite;}
+  .skel.s24{height:24px;} .skel.s72{height:72px;}
+
+  /* -------- map ------------------------------------------------------ */
   #mappanel{grid-column:1; grid-row:1; position:relative;}
-  #map{flex:1; min-height:0; background:#0b1020;}
-  .leaflet-container{background:#1a2233;}
-  .leaflet-tile{filter:brightness(.72) contrast(1.05) saturate(.75);}
-  .leaflet-popup-content-wrapper, .leaflet-popup-tip{
-    background:var(--panel2); color:var(--text);
-    border:1px solid var(--line);}
-  .leaflet-popup-content{margin:10px 12px; font:12px/1.5 "Segoe UI",sans-serif;}
-  .popimg{width:280px; max-width:280px; border-radius:6px;
-          border:1px solid var(--line); display:block; margin:6px 0;}
-  .legend{display:flex; gap:14px; padding:6px 12px; font-size:11px;
+  #map{flex:1; min-height:0; background:var(--bg);}
+  .leaflet-container{background:#1A1E23; font-family:"Segoe UI",sans-serif;}
+  .leaflet-tile{filter:grayscale(.35) brightness(.66) contrast(1.08);}
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip{
+    background:var(--panel2); color:var(--ink);
+    border:1px solid var(--line); border-radius:0; box-shadow:none;}
+  .leaflet-popup-content{margin:8px 12px; font:12px/1.5 "Segoe UI",sans-serif;}
+  .popimg{width:280px; max-width:280px; border:1px solid var(--line);
+          display:block; margin:8px 0;}
+  .legend{display:flex; gap:12px; padding:4px 12px; font-size:11px;
           color:var(--dim); border-top:1px solid var(--line); flex:0 0 auto;
-          flex-wrap:wrap;}
-  .dot{display:inline-block; width:9px; height:9px; border-radius:50%;
-       margin-right:4px; vertical-align:-1px;}
+          flex-wrap:wrap; align-items:center;}
+  .dot{display:inline-block; width:8px; height:8px; margin-right:4px;
+       vertical-align:-1px;}
   .lyrtoggle{cursor:pointer; user-select:none;}
   .lyrtoggle.off{opacity:.4;}
-  #locatebtn{position:absolute; right:10px; top:44px; z-index:1000;
-             width:34px; height:34px; padding:0; font-size:17px;
-             border-radius:6px;}
-  #fsbtn{position:absolute; right:10px; top:84px; z-index:1000;
-         width:34px; height:34px; padding:0; font-size:15px;
-         border-radius:6px;}
-  #mappanel.fullscreen{position:fixed; inset:0; z-index:1400;
-                       border-radius:0;}
-  /* location chips under AI answers */
-  .locrow{display:flex; gap:4px; flex-wrap:wrap; margin-top:5px;}
-  .locbtn{margin:0; padding:1px 8px; font-size:10px; border-radius:9px;
-          background:#11264a; border-color:#1d4f8a;}
-  /* incident queue filter bar */
-  .filterbar{display:flex; gap:5px; padding:6px 12px; flex-wrap:wrap;
-             border-bottom:1px solid var(--line); flex:0 0 auto;
-             align-items:center;}
-  .fbtn{margin:0; padding:2px 10px; font-size:11px; border-radius:10px;
-        background:var(--panel2);}
-  .fbtn.on{background:#114a86; border-color:#1d6cc0; font-weight:700;}
-  /* multi-select checkbox dropdown (Categories / Incident types) */
-  .msdd{position:relative; display:inline-block;}
-  .msdd-btn{margin:0; padding:3px 10px; font-size:11px; border-radius:6px;
-            background:var(--panel2); display:inline-flex; align-items:center;
-            gap:6px; white-space:nowrap;}
-  .msdd-btn .cnt{color:var(--accent); font-weight:700;}
-  .msdd-btn::after{content:"▾"; font-size:9px; opacity:.7;}
-  .msdd.open .msdd-btn{background:#114a86; border-color:#1d6cc0;}
-  .msdd-panel{display:none; position:absolute; z-index:1300; top:calc(100% + 4px);
-              left:0; min-width:200px; background:var(--panel);
-              border:1px solid #2f447c; border-radius:8px; padding:6px;
-              box-shadow:0 8px 24px rgba(0,0,0,.5);}
-  .msdd.open .msdd-panel{display:block;}
-  .msdd-panel .msdd-quick{display:flex; gap:6px; padding:2px 4px 6px;
-              border-bottom:1px solid var(--line); margin-bottom:4px;}
-  .msdd-panel .msdd-quick a{font-size:10px; cursor:pointer; color:var(--accent);
-              text-transform:uppercase; letter-spacing:.4px;}
-  .msdd-opt{display:flex; align-items:center; gap:8px; padding:4px 6px;
-            border-radius:5px; cursor:pointer; font-size:12px;
-            color:var(--text);}
-  .msdd-opt:hover{background:var(--panel2);}
-  .msdd-opt input{width:14px; height:14px; accent-color:var(--accent);
-                  cursor:pointer;}
-  .msdd-opt .cnt{margin-left:auto; color:var(--dim); font-size:11px;}
+  #locatebtn{position:absolute; right:8px; top:44px; z-index:1000;
+             width:32px; height:32px; padding:0; font-size:16px;}
+  #fsbtn{position:absolute; right:8px; top:84px; z-index:1000;
+         width:32px; height:32px; padding:0; font-size:14px;}
+  #mappanel.fullscreen{position:fixed; inset:0; z-index:1400;}
 
-  /* incident-queue controls (time range / sort / page size / types) */
-  .qctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-        padding:6px 12px; border-bottom:1px solid var(--line);
-        flex:0 0 auto; font-size:11px; color:var(--dim);}
-  .qctl label{display:flex; gap:4px; align-items:center; white-space:nowrap;}
-  .qctl select,.qctl input[type=datetime-local]{background:var(--panel2);
-        color:var(--text); border:1px solid var(--line); border-radius:5px;
-        padding:2px 6px; font-size:11px;}
-  .qctl .abs{display:none; gap:6px; align-items:center; flex-wrap:wrap;}
-  .qctl.absmode .abs{display:flex;}
-  .qctl .qcount{margin-left:auto; color:var(--dim);}
-  /* AI classification justification (why this was flagged) */
-  details.aiwhy{margin:6px 0; border:1px solid #2a3b66; border-radius:6px;
-                background:#0f1830;}
-  details.aiwhy summary{cursor:pointer; color:var(--accent); font-size:11px;
-                        list-style:none; user-select:none; padding:6px 9px;
-                        font-weight:700;}
-  details.aiwhy summary::before{content:"🤖 ▸ ";}
-  details.aiwhy[open] summary::before{content:"🤖 ▾ ";}
-  details.aiwhy .aibody{font-size:12px; color:var(--text); padding:0 10px 9px;}
-  details.aiwhy .aibody .lbl{color:var(--dim); font-size:10px;
-                             text-transform:uppercase; letter-spacing:.4px;
-                             margin-top:6px;}
-  .frozen-tag{display:inline-block; margin-top:6px; font-size:10px;
-              color:var(--warn); border:1px solid #806022; border-radius:9px;
-              padding:1px 8px;}
-  /* 911 event cards in the queue */
-
-  .emcard{cursor:pointer;}
-  .emcard:hover{border-color:var(--accent);}
-  /* incidents & plans */
-  #sidepanel{grid-column:2; grid-row:1 / 3;}
-  .card{background:var(--panel2); border:1px solid var(--line);
-        border-radius:6px; padding:8px 10px; margin-bottom:8px;}
-  .card h3{font-size:13px; margin-bottom:4px;}
-  .meta{color:var(--dim); font-size:11px;}
-  .sev{font-weight:700;}
-  .sev.high{color:var(--bad);} .sev.med{color:var(--warn);}
-  .state{display:inline-block; padding:1px 8px; border-radius:8px;
-         font-size:10px; text-transform:uppercase; letter-spacing:.5px;
-         border:1px solid var(--line); color:var(--dim);}
-  .camthumb{width:100%; max-height:150px; object-fit:cover;
-            border-radius:6px; border:1px solid var(--line);
-            margin-top:6px; cursor:pointer; transition:max-height .2s;}
-  .camthumb.expanded{max-height:400px; object-fit:contain;}
-  button{background:#1c2c52; color:var(--text); border:1px solid #2f447c;
-         border-radius:5px; padding:4px 12px; font-size:12px; cursor:pointer;
-         margin:4px 6px 0 0;}
-  button:hover{background:#26396a;}
-  button.primary{background:#114a86; border-color:#1d6cc0;}
-  button.danger{background:#5b1a26; border-color:#8a2a3c;}
-  button:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
-  /* async-busy buttons: inline spinner + disabled look */
+  /* -------- buttons: physical, blocky ------------------------------- */
+  button{background:var(--panel2); color:var(--ink);
+         border:1px solid #3A4048; padding:4px 12px; font-size:12px;
+         cursor:pointer; margin:4px 8px 0 0;
+         font-family:"Segoe UI",system-ui,sans-serif;}
+  button:hover{background:#282D34; border-color:#4A515A;}
+  button.primary{background:#12314A; border-color:var(--blue); color:#CFE0EF;}
+  button.primary:hover{background:#173B58;}
+  button.danger{background:#33150A; border-color:var(--orange);
+                color:var(--orange);}
+  button:focus-visible{outline:2px solid var(--yellow); outline-offset:1px;}
   @keyframes spin{to{transform:rotate(360deg);}}
   button.busy{opacity:.65; pointer-events:none;}
-  button.busy::before{content:""; display:inline-block; width:10px;
-    height:10px; margin-right:6px; vertical-align:-1px;
-    border:2px solid var(--accent); border-top-color:transparent;
+  button.busy::before{content:""; display:inline-block; width:8px;
+    height:8px; margin-right:8px; vertical-align:0;
+    border:2px solid var(--yellow); border-top-color:transparent;
     border-radius:50%; animation:spin .7s linear infinite;}
-  .conf{font-weight:700; color:var(--accent);}
-  .blocked{color:var(--bad); font-size:12px;}
-  /* structured AI plan */
-  .oprow{display:flex; align-items:center; gap:8px; background:#101a33;
-         border:1px solid var(--line); border-radius:6px;
-         padding:6px 9px; margin:4px 0; font-size:12px;}
-  .oprow .opdelta{font-weight:700; color:var(--good); white-space:nowrap;
-                  font-size:13px; min-width:44px;}
-  .oprow .opname{color:var(--text);}
-  .oprow .opphase{color:var(--dim); font-size:10px; margin-left:auto;
-                  white-space:nowrap;}
+
+  select,input{background:var(--panel2); color:var(--ink);
+               border:1px solid var(--line); padding:4px 8px; font-size:12px;
+               font-family:var(--mono);}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .meta{color:var(--dim); font-size:11px;}
+
+  /* -------- location chips under AI answers ------------------------- */
+  .locrow{display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;}
+  .locbtn{margin:0; padding:0 8px; font-size:10px; height:20px;
+          background:#12314A; border-color:var(--blue);}
+
+  /* -------- rail filter bar + queue controls ------------------------ */
+  .filterbar{display:flex; gap:4px; padding:8px 12px; flex-wrap:wrap;
+             border-bottom:1px solid var(--line); flex:0 0 auto;
+             align-items:center;}
+  .msdd{position:relative; display:inline-block;}
+  .msdd-btn{margin:0; padding:4px 8px; font-size:11px;
+            display:inline-flex; align-items:center; gap:8px;
+            white-space:nowrap;}
+  .msdd-btn .cnt{color:var(--yellow); font-weight:700;
+                 font-family:var(--mono);}
+  .msdd-btn::after{content:"▾"; font-size:9px; opacity:.7;}
+  .msdd.open .msdd-btn{border-color:var(--yellow);}
+  .msdd-panel{display:none; position:absolute; z-index:1300;
+              top:calc(100% + 4px); left:0; min-width:200px;
+              background:var(--panel); border:1px solid #4A515A;
+              padding:8px;}
+  .msdd.open .msdd-panel{display:block;}
+  .msdd-panel .msdd-quick{display:flex; gap:8px; padding:0 4px 8px;
+              border-bottom:1px solid var(--line); margin-bottom:4px;}
+  .msdd-panel .msdd-quick a{font-size:10px; cursor:pointer;
+              color:var(--blue); text-transform:uppercase;
+              letter-spacing:.4px;}
+  .msdd-opt{display:flex; align-items:center; gap:8px; padding:4px;
+            cursor:pointer; font-size:12px; color:var(--ink);}
+  .msdd-opt:hover{background:var(--panel2);}
+  .msdd-opt input{width:12px; height:12px; accent-color:var(--yellow);
+                  cursor:pointer;}
+  .msdd-opt .cnt{margin-left:auto; color:var(--dim); font-size:11px;
+                 font-family:var(--mono);}
+  .qctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+        padding:8px 12px; border-bottom:1px solid var(--line);
+        flex:0 0 auto; font-size:11px; color:var(--dim);}
+  .qctl label{display:flex; gap:4px; align-items:center;
+              white-space:nowrap;}
+  .qctl select,.qctl input[type=datetime-local]{padding:2px 4px;
+        font-size:11px;}
+  .qctl .abs{display:none; gap:8px; align-items:center; flex-wrap:wrap;}
+  .qctl.absmode .abs{display:flex;}
+  .qctl .qcount{margin-left:auto; color:var(--dim);
+                font-family:var(--mono);}
+  /* rail chrome hidden in the focused-incident workspace state */
+  #sidepanel.wsmode .filterbar, #sidepanel.wsmode .qctl{display:none;}
+  /* right rail spans both grid rows (full console height) */
+  #sidepanel{grid-column:2; grid-row:1 / 3;}
+
+  /* ================= TRIAGE INBOX =================================== */
+  .tierhead{font-size:11px; font-weight:700; letter-spacing:1px;
+            text-transform:uppercase; padding:8px 0 4px;
+            display:flex; align-items:center; gap:8px;}
+  .tierhead .tn{font-family:var(--mono); font-weight:400;
+                margin-left:auto; color:var(--dim);}
+  .tierhead.th1{color:var(--orange);}
+  .tierhead.th1::before{content:""; width:12px; height:12px;
+    background:var(--orange); display:inline-block;}
+  .tierhead.th2{color:var(--yellow);}
+  .tierhead.th2::before{content:""; width:12px; height:12px;
+    background:var(--yellow); display:inline-block;}
+  .trow{display:flex; gap:8px; align-items:flex-start; cursor:pointer;
+        background:var(--panel2); border:1px solid var(--line);
+        border-left:4px solid var(--line); padding:8px; margin:0 0 4px;}
+  .trow:hover{border-color:#4A515A;}
+  .trow.t1{border-left-color:var(--orange);}
+  .trow.t2{border-left-color:var(--yellow);}
+  .trow.cur{outline:2px solid var(--yellow); outline-offset:-2px;}
+  .tsev{flex:0 0 44px; text-align:center; font-family:var(--mono);
+        font-size:18px; font-weight:700; line-height:1.1;
+        padding-top:2px;}
+  .tsev small{display:block; font-size:9px; font-weight:400;
+              color:var(--dim); letter-spacing:.5px;}
+  .tmain{flex:1; min-width:0;}
+  .tline1{display:flex; align-items:center; gap:8px; font-size:12px;}
+  .tline1 b{text-transform:uppercase; letter-spacing:.5px;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .tage{margin-left:auto; font-family:var(--mono); font-size:11px;
+        color:var(--dim); white-space:nowrap;}
+  .tline2{font-size:11px; color:var(--dim); white-space:nowrap;
+          overflow:hidden; text-overflow:ellipsis; margin-top:2px;}
+  .tag{display:inline-block; padding:0 6px; font-size:9px;
+       text-transform:uppercase; letter-spacing:.5px; line-height:16px;
+       border:1px solid var(--line); color:var(--dim);
+       font-family:var(--mono); white-space:nowrap;}
+  .tag.orange{border-color:var(--orange); color:var(--orange);}
+  .tag.yellow{border-color:var(--yellow); color:var(--yellow);}
+  .tag.green{border-color:var(--green); color:var(--green-t);}
+  /* inline field-mode actions (hidden on desktop, shown ≤640px) */
+  .rowact{display:none; gap:8px; margin-top:8px; width:100%;}
+  .rowact button{flex:1; margin:0; min-height:44px; font-weight:700;}
+
+  /* ================= FOCUSED INCIDENT WORKSPACE ===================== */
+  .wsbar{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .wsbar button{margin:0;}
+  .wsid{margin-left:auto; font-family:var(--mono); font-size:11px;
+        color:var(--dim); white-space:nowrap; overflow:hidden;
+        text-overflow:ellipsis;}
+  .wstitle{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .wstitle b{font-size:15px; letter-spacing:1px; text-transform:uppercase;}
+  .state{display:inline-block; padding:0 8px; font-size:10px;
+         line-height:18px; text-transform:uppercase; letter-spacing:.5px;
+         border:1px solid var(--line); color:var(--dim);
+         font-family:var(--mono);}
+  .sevblock{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .sevfig{font-family:var(--mono); font-size:24px; font-weight:700;
+          min-width:64px;}
+  .sevbar{flex:1; height:8px; background:var(--panel2);
+          border:1px solid var(--line); overflow:hidden;}
+  .sevbar i{display:block; height:100%;}
+  .wsloc{display:flex; align-items:center; gap:8px; margin-bottom:8px;
+         font-size:13px;}
+  .wsloc .locfocus{margin-left:auto;}
+  .camthumb{width:100%; max-height:160px; object-fit:cover;
+            border:1px solid var(--line); margin-top:4px; cursor:pointer;
+            transition:max-height .2s;}
+  .camthumb.expanded{max-height:400px; object-fit:contain;}
+  .frozen-tag{display:inline-block; margin-top:4px; font-size:10px;
+              color:var(--yellow); border:1px solid var(--yellow);
+              padding:0 8px; line-height:18px; font-family:var(--mono);}
+  /* governance block */
+  .gov{border:1px solid #3A4048; margin-top:8px; background:var(--panel);}
+  .govhead{display:flex; align-items:center; gap:8px; padding:8px;
+           border-bottom:1px solid var(--line); font-size:11px;
+           font-weight:700; letter-spacing:1px; text-transform:uppercase;
+           color:var(--dim);}
+  .govhead .conf{margin-left:auto; font-family:var(--mono);
+                 color:var(--yellow); font-size:13px;}
+  .govhead .mdl{font-family:var(--mono); font-weight:400;
+                text-transform:none; letter-spacing:0;}
+  .optable{width:100%; border-collapse:collapse; font-size:12px;}
+  .optable th{font-size:9px; text-transform:uppercase; letter-spacing:.5px;
+              color:var(--dim); text-align:left; padding:4px 8px;
+              border-bottom:1px solid var(--line); font-weight:700;}
+  .optable td{padding:4px 8px; border-bottom:1px solid var(--line);}
+  .optable td.num{font-family:var(--mono); white-space:nowrap;}
+  .optable td.delta{font-family:var(--mono); font-weight:700;
+                    color:var(--green-t); white-space:nowrap;}
+  .optable tr.oplink{cursor:pointer;}
+  .optable tr.oplink:hover td{background:var(--panel2);}
+  .govchips{display:flex; gap:4px; flex-wrap:wrap; padding:8px;}
+  .pchip{padding:0 8px; font-size:10px; line-height:18px;
+         border:1px solid var(--line); color:var(--dim);
+         white-space:nowrap; font-family:var(--mono);}
+  .pchip.good{border-color:var(--green); color:var(--green-t);}
+  .pchip.warn{border-color:var(--yellow); color:var(--yellow);}
+  .pchip.bad{border-color:var(--orange); color:var(--orange);}
+  .sig{border-top:1px solid var(--line); padding:8px;
+       font-family:var(--mono); font-size:11px; color:var(--dim);}
+  .sig .sighead{font-size:9px; letter-spacing:1px; text-transform:uppercase;
+                margin-bottom:4px; color:var(--dim); font-weight:700;}
+  .sig .sigrow{display:flex; gap:8px; padding:1px 0;}
+  .sig .sigrow .k{flex:0 0 56px; color:var(--dim);}
+  .sig .sigrow .v{color:var(--ink); word-break:break-all;
+                  user-select:all;}
+  .govact{display:flex; gap:8px; padding:8px;
+          border-top:1px solid var(--line);}
+  .govact button{flex:1; margin:0; min-height:40px; font-size:12px;
+                 font-weight:700; letter-spacing:.5px;
+                 text-transform:uppercase;}
+  .govact .approve{background:var(--green); border-color:#00A34C;
+                   color:#fff;}
+  .govact .approve:hover{background:#00994A;}
+  .govact .reject{background:var(--panel2); border:1px solid var(--orange);
+                  color:var(--orange);}
+  .govact .reject:hover{background:#2A1810;}
+  .govact button span.kbd{display:block; font-size:9px; opacity:.7;
+                          font-weight:400; letter-spacing:1px;
+                          font-family:var(--mono);}
+  .govstate{padding:8px; border-top:1px solid var(--line); font-size:12px;
+            font-family:var(--mono);}
+  .blocked{color:var(--orange); font-size:12px; padding:8px;}
+  /* write-lock banner */
+  .wlock{display:flex; align-items:center; gap:8px; padding:12px 8px;
+         border-top:2px solid var(--yellow); color:var(--yellow);
+         font-family:var(--mono); font-size:11px; letter-spacing:.5px;}
+  .wlock::before{content:""; width:12px; height:12px;
+    border:2px solid var(--yellow); border-top-color:transparent;
+    border-radius:50%; animation:spin .8s linear infinite; flex:0 0 auto;}
+
+  /* -------- AI justification / rationale expanders ------------------ */
+  details.aiwhy{margin:8px 0; border:1px solid var(--line);
+                background:var(--panel2);}
+  details.aiwhy summary{cursor:pointer; color:var(--blue); font-size:11px;
+                        list-style:none; user-select:none; padding:8px;
+                        font-weight:700;}
+  details.aiwhy summary::before{content:"▸ AI · ";}
+  details.aiwhy[open] summary::before{content:"▾ AI · ";}
+  details.aiwhy .aibody{font-size:12px; color:var(--ink); padding:0 8px 8px;}
+  details.aiwhy .aibody .lbl{color:var(--dim); font-size:10px;
+                             text-transform:uppercase; letter-spacing:.4px;
+                             margin-top:4px;}
   details.why{margin:4px 0;}
-  details.why summary{cursor:pointer; color:var(--accent); font-size:11px;
+  details.why summary{cursor:pointer; color:var(--blue); font-size:11px;
                       list-style:none; user-select:none;}
   details.why summary::before{content:"▸ ";}
   details.why[open] summary::before{content:"▾ ";}
   details.why .whytext{font-size:12px; color:var(--dim); margin-top:4px;
                        border-left:2px solid var(--line); padding-left:8px;}
-  .planchips{display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;}
-  .pchip{padding:1px 8px; border-radius:9px; font-size:10px;
-         border:1px solid var(--line); color:var(--dim); white-space:nowrap;}
-  .pchip.good{border-color:#1f6b44; color:var(--good);}
-  .pchip.warn{border-color:#806022; color:var(--warn);}
-  /* severity bar */
-  .sevwrap{display:flex; align-items:center; gap:6px; margin-top:3px;}
-  .sevbar{flex:0 0 64px; height:6px; border-radius:3px; background:#1c2945;
-          overflow:hidden;}
-  .sevbar i{display:block; height:100%; border-radius:3px;}
-  /* KPI grid (safety metrics) */
-  .kpis{display:grid; grid-template-columns:repeat(3,1fr); gap:5px;}
+
+  /* -------- KPI grid (system status) --------------------------------- */
+  .kpis{display:grid; grid-template-columns:repeat(3,1fr); gap:4px;}
   .kpi{background:var(--panel2); border:1px solid var(--line);
-       border-radius:6px; padding:5px 4px; text-align:center;}
-  .kpi b{display:block; font-size:15px; color:var(--accent); line-height:1.2;}
-  .kpi span{font-size:9.5px; color:var(--dim); text-transform:uppercase;
+       padding:4px; text-align:center;}
+  .kpi b{display:block; font-size:20px; color:var(--ink); line-height:1.2;
+         font-family:var(--mono); font-weight:700;}
+  .kpi span{font-size:9px; color:var(--dim); text-transform:uppercase;
             letter-spacing:.4px;}
-  /* segmented mode control */
-  .seg{display:flex; border:1px solid var(--line); border-radius:6px;
-       overflow:hidden;}
-  .seg button{margin:0; border:none; border-radius:0; padding:3px 12px;
-              font-size:11px; text-transform:capitalize;
-              background:var(--panel2);}
-  .seg button.on{background:#114a86; color:#fff; font-weight:700;}
-  /* copilot chat bubbles */
-  .chatmsg{margin:4px 0; padding:5px 9px; border-radius:7px; font-size:12px;}
-  .chatmsg.you{background:#16233f;}
-  .chatmsg.bot{background:#0f1a30; border-left:2px solid var(--accent);}
-  .chatmsg .who{font-size:10px; color:var(--dim); text-transform:uppercase;
-                letter-spacing:.5px; display:block; margin-bottom:1px;}
-  /* bottom strip */
+  .seg{display:flex; border:1px solid var(--line);}
+  .seg button{margin:0; border:none; padding:4px 12px; font-size:11px;
+              text-transform:uppercase; background:var(--panel2);
+              letter-spacing:.5px;}
+  .seg button.on{background:var(--green); color:#fff; font-weight:700;}
+
+  /* -------- copilot chat --------------------------------------------- */
+  .chatmsg{margin:4px 0; padding:4px 8px; font-size:12px;
+           border-left:2px solid var(--line); background:var(--panel2);}
+  .chatmsg.bot{border-left-color:var(--blue);}
+  .chatmsg .who{font-size:9px; color:var(--dim); text-transform:uppercase;
+                letter-spacing:.5px; display:block; margin-bottom:1px;
+                font-family:var(--mono);}
+
+  /* -------- bottom strip --------------------------------------------- */
   #bottompanels{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;
                 grid-column:1; grid-row:2; min-height:0;}
-  .alert{padding:5px 8px; border-left:3px solid var(--warn);
-         background:var(--panel2); margin-bottom:6px; font-size:12px;}
-  .alert.critical{border-color:var(--crit);}
-  .alert.high{border-color:var(--bad);}
-  .audit-entry{font-size:11px; color:var(--dim); padding:3px 0;
-               border-bottom:1px dotted #1c2945;}
-  .audit-entry b{color:var(--text);}
-  #toast{position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
-         background:#16213c; border:1px solid var(--accent); padding:9px 18px;
-         border-radius:8px; display:none; z-index:1200; max-width:70%;}
-  select,input{background:var(--panel2); color:var(--text);
-               border:1px solid var(--line); border-radius:5px;
-               padding:4px 8px; font-size:12px;}
-  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
-  a{color:var(--accent);}
-  /* login overlay */
-  #loginoverlay{position:fixed; inset:0; background:rgba(5,8,18,.92);
+  .alert{padding:4px 8px; border-left:3px solid var(--yellow);
+         background:var(--panel2); margin-bottom:4px; font-size:12px;}
+  .alert.critical,.alert.high{border-color:var(--orange);}
+  .audit-entry{font-size:11px; color:var(--dim); padding:2px 0;
+               border-bottom:1px dotted var(--line);
+               font-family:var(--mono);}
+  .audit-entry b{color:var(--ink); font-family:"Segoe UI",sans-serif;}
+  .paneltab{cursor:pointer; user-select:none; opacity:.55;
+            padding-bottom:2px; border-bottom:2px solid transparent;}
+  .paneltab.on{opacity:1; color:var(--ink);
+               border-bottom-color:var(--yellow);}
+  .hourbars{display:flex; align-items:flex-end; gap:2px; height:44px;
+            margin:4px 0 2px;}
+  .hourbars .hb{flex:1; min-width:2px; background:var(--blue); opacity:.9;}
+  .hotrow{display:flex; align-items:center; gap:8px; font-size:11px;
+          padding:2px 0; cursor:pointer;
+          border-bottom:1px dotted var(--line);}
+  .hotrow:hover{color:var(--blue);}
+  .hotrow b{font-family:var(--mono);}
+  .hotbar{flex:0 0 52px; height:4px; background:var(--panel2);
+          overflow:hidden;}
+  .hotbar i{display:block; height:100%;}
+
+  /* -------- toast ----------------------------------------------------- */
+  #toast{position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+         background:var(--panel); border:1px solid var(--yellow);
+         border-left:4px solid var(--yellow); padding:8px 16px;
+         display:none; z-index:1200; max-width:70%; font-size:12px;}
+
+  /* -------- login overlay --------------------------------------------- */
+  #loginoverlay{position:fixed; inset:0; background:#0C0E10;
                 display:flex; align-items:center; justify-content:center;
                 z-index:2000;}
   #loginbox{background:var(--panel); border:1px solid var(--line);
-            border-radius:10px; padding:28px 32px; width:360px;}
-  #loginbox h2{font-size:15px; letter-spacing:1px; color:var(--text);
+            border-top:4px solid var(--orange); padding:28px 32px;
+            width:360px;}
+  #loginbox h2{font-size:15px; letter-spacing:1px; color:var(--ink);
                margin-bottom:4px;}
-  #loginbox .sub{color:var(--dim); font-size:11px; margin-bottom:14px;}
-  #loginbox label{display:block; font-size:11px; color:var(--dim);
-                  margin:10px 0 3px;}
-  #loginbox input{width:100%; padding:7px 10px; font-size:13px;}
-  #loginbox button{width:100%; margin-top:16px; padding:8px;}
-  #loginerr{color:var(--bad); font-size:12px; margin-top:10px; min-height:16px;}
+  #loginbox .sub{color:var(--dim); font-size:11px; margin-bottom:12px;}
+  #loginbox label{display:block; font-size:10px; color:var(--dim);
+                  margin:12px 0 4px; text-transform:uppercase;
+                  letter-spacing:.5px;}
+  #loginbox input{width:100%; padding:8px; font-size:13px;}
+  #loginbox button{width:100%; margin:16px 0 0; padding:8px;
+                   font-weight:700; letter-spacing:.5px;
+                   text-transform:uppercase;}
+  #loginerr{color:var(--orange); font-size:12px; margin-top:8px;
+            min-height:16px;}
   .userbadge{font-size:11px; color:var(--dim);}
-  .userbadge b{color:var(--text);}
-  #livedot{display:inline-block; width:8px; height:8px; border-radius:50%;
+  .userbadge b{color:var(--ink); font-family:var(--mono);}
+  #livedot{display:inline-block; width:8px; height:8px;
            background:var(--dim); margin-right:4px; vertical-align:0;}
-  #livedot.on{background:var(--good); box-shadow:0 0 6px var(--good);}
-  .acctchips{display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;}
-  .acctchips button{flex:1; margin:0; padding:5px 4px; font-size:11px;
-                    width:auto;}
-  .acctchips button.sel{background:#114a86; border-color:#1d6cc0;}
-  /* generic modal */
-  #modal{position:fixed; inset:0; background:rgba(5,8,18,.85);
+  #livedot.on{background:var(--green-t);}
+  .acctchips{display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;}
+  .acctchips button{flex:1; margin:0; padding:4px; font-size:11px;
+                    width:auto; text-transform:none; font-weight:400;}
+  .acctchips button.sel{border-color:var(--yellow); color:var(--yellow);}
+
+  /* -------- generic modal ---------------------------------------------- */
+  #modal{position:fixed; inset:0; background:rgba(12,14,16,.9);
          display:none; align-items:center; justify-content:center;
          z-index:1500;}
   #modalbox{background:var(--panel); border:1px solid var(--line);
-            border-radius:10px; padding:18px 22px; width:440px;
-            max-height:80vh; overflow-y:auto;}
-  #modalbox h3{font-size:13px; text-transform:uppercase; letter-spacing:1px;
-               color:var(--dim); margin-bottom:10px;}
+            border-top:4px solid var(--yellow); padding:16px 20px;
+            width:440px; max-height:80vh; overflow-y:auto;}
+  #modalbox h3{font-size:12px; text-transform:uppercase; letter-spacing:1px;
+               color:var(--dim); margin-bottom:8px;}
   .instr{background:var(--panel2); border:1px solid var(--line);
-         border-radius:6px; padding:8px 10px; margin-bottom:8px;
-         font-size:12px;}
-  .instr b{color:var(--text);} .instr .chg{color:var(--good); font-weight:700;}
-  /* tabbed bottom-left panel (Safety | Analytics) */
-  .paneltab{cursor:pointer; user-select:none; opacity:.55;
-            padding-bottom:2px; border-bottom:2px solid transparent;}
-  .paneltab.on{opacity:1; color:var(--text);
-               border-bottom-color:var(--accent);}
-  /* analytics hour bars */
-  .hourbars{display:flex; align-items:flex-end; gap:2px; height:46px;
-            margin:4px 0 2px;}
-  .hourbars .hb{flex:1; min-width:3px; background:var(--accent);
-                border-radius:2px 2px 0 0; opacity:.8;}
-  .hotrow{display:flex; align-items:center; gap:6px; font-size:11px;
-          padding:2px 0; cursor:pointer; border-bottom:1px dotted #1c2945;}
-  .hotrow:hover{color:var(--accent);}
-  .hotbar{flex:0 0 54px; height:5px; border-radius:3px; background:#1c2945;
-          overflow:hidden;}
-  .hotbar i{display:block; height:100%; border-radius:3px;}
+         padding:8px; margin-bottom:8px; font-size:12px;
+         font-family:var(--mono);}
+  .instr b{color:var(--ink); font-family:"Segoe UI",sans-serif;}
+  .instr .chg{color:var(--green-t); font-weight:700;}
 
-  /* ---------------- Responsive / mobile (phones, Samsung Fold) ----------
-     The desktop layout is a fixed 2-col grid with a 430px side panel and a
-     3-col bottom strip. On narrow / foldable screens that overflows badly,
-     so below 900px we let the whole thing scroll vertically and stack the
-     panels full-width; below 560px (Fold outer screen) we tighten spacing
-     and collapse the bottom strip to one column. */
-  @media (max-width: 900px){
+  /* ==================================================================
+     BREAKPOINTS — graceful structural degradation
+     ================================================================== */
+  @media (max-width: 1100px){
+    main{grid-template-columns:minmax(0,1fr) 420px;}
+    #bottompanels{grid-template-columns:1fr 1fr;}
+  }
+  @media (max-width: 899px){
     body{height:auto; min-height:100vh; overflow:auto;}
-    header{flex-wrap:wrap; gap:8px 10px; padding:8px 10px;}
+    header{flex-wrap:wrap; gap:8px; padding:8px 12px; height:auto;}
     header h1{font-size:15px;}
     .spacer{flex-basis:100%; height:0;}
     .feedchips{flex-wrap:wrap;}
     main{display:flex; flex-direction:column; height:auto;
-         padding:6px; gap:8px;}
-    /* Give the map a usable fixed height instead of a grid row. */
-    #mappanel{grid-column:auto; grid-row:auto; height:56vh; min-height:300px;}
+         padding:8px; gap:8px;}
+    #mappanel{grid-column:auto; grid-row:auto; height:46vh;
+              min-height:280px;}
     #map{min-height:240px;}
-    #sidepanel{grid-column:auto; grid-row:auto;
-               max-height:none; min-height:340px;}
+    #sidepanel{grid-column:auto; grid-row:auto; max-height:none;
+               min-height:320px;}
     #sidepanel .body{max-height:60vh;}
     #bottompanels{display:flex; flex-direction:column; grid-column:auto;
                   grid-row:auto; gap:8px;}
     #bottompanels .panel{min-height:180px;}
-    #bottompanels .body{max-height:42vh;}
-    /* Popups and camera thumbnails must not exceed the viewport width. */
+    #bottompanels .body{max-height:40vh;}
     .popimg{width:auto; max-width:78vw;}
   }
-  @media (max-width: 560px){
-    header h1{font-size:14px; width:100%;}
+  /* FIELD ACTION MODE — managers on the move. Map, feeds and secondary
+     panels leave the flow; the rail becomes a full-viewport, high-density
+     text-and-button Approval/Rejection Action Queue. */
+  @media (max-width: 640px){
+    #mappanel{display:none;}
+    #bottompanels{display:none;}
+    #sidepanel{min-height:calc(100vh - 120px);}
+    #sidepanel .body{max-height:none;}
+    .rowact{display:flex;}
+    .trow{padding:8px;}
+    header h1{font-size:14px;}
     .modebadge,.databadge{font-size:10px; padding:2px 8px;}
-    main{padding:5px; gap:6px;}
-    #mappanel{height:48vh;}
-    .legend{gap:8px 10px; font-size:10px;}
-    .qctl{gap:6px;}
-    .qctl label{font-size:10px;}
-    /* Login card fits the Fold's narrow outer screen. */
-    #loginbox{width:92vw; max-width:360px; padding:22px 20px;}
+    #loginbox{width:92vw; max-width:360px; padding:20px;}
     .kpis{grid-template-columns:repeat(2,1fr);}
-    /* Larger tap targets on touch screens. */
-    button{padding:6px 12px;}
-    .fbtn,.msdd-btn{padding:4px 11px;}
+    button{padding:8px 12px;}
+    .govact{flex-direction:column;}
+    .govact button{min-height:44px;}
   }
-  /* Foldable posture hints: react to very narrow OR hinge-split viewports. */
   @media (max-width: 380px){
-    header h1 span{display:inline;}
-    .kpis{grid-template-columns:repeat(2,1fr);}
+    main{padding:4px; gap:4px;}
+    .qctl{gap:4px;}
+    .qctl label{font-size:10px;}
+    .tsev{flex-basis:36px; font-size:16px;}
+    .tline1 b{font-size:11px;}
+    .sig .sigrow{flex-direction:column; gap:0;}
+    .wsid{max-width:120px;}
     .popimg{max-width:88vw;}
   }
 </style>
 </head>
 <body>
+<div id="edgeflash" aria-hidden="true"></div>
 <div id="loginoverlay" role="dialog" aria-label="Sign in">
   <div id="loginbox">
-    <h2>NEXUS <span style="color:var(--accent)">CITY OS</span> — SIGN IN</h2>
+    <h2>NEXUS <span style="color:var(--orange)">CITY OS</span> — SIGN IN</h2>
     <div class="sub">Traffic Operations Center · sessions are audit-logged</div>
     <label for="li_user">User ID</label>
     <input id="li_user" value="" autocomplete="username">
@@ -353,7 +503,7 @@
     <input id="li_pass" type="password" value=""
            autocomplete="current-password">
 
-    <div id="li_turnstile" class="cf-turnstile" style="margin-top:14px"></div>
+    <div id="li_turnstile" class="cf-turnstile" style="margin-top:12px"></div>
     <button class="primary" onclick="doLogin()">Sign in</button>
     <div id="loginerr" role="alert"></div>
 
@@ -380,34 +530,36 @@
   <span id="congsrc" class="databadge data-sim" title="How intersection congestion is being computed" style="display:none"></span>
   <span class="userbadge" id="userbadge"></span>
   <div class="spacer"></div>
-  <span class="userbadge"><span id="livedot"></span><span id="pushstate">connecting…</span></span>
+  <button id="audiobtn" onclick="toggleAudio()"
+    title="Audible alarm: 440 Hz pulse while a critical incident is unacknowledged">🔊</button>
+  <span class="userbadge"><span id="livedot"></span><span id="pushstate" class="mono">connecting…</span></span>
   <div class="feedchips" id="feedchips" aria-label="Data feed freshness"></div>
 </header>
 
 <main>
   <section class="panel" id="mappanel" aria-label="Live Grid map">
-    <h2>Live Grid — Seattle <span id="weatherline" style="float:right;text-transform:none;letter-spacing:0"></span></h2>
+    <h2>Live Grid — Seattle <span id="weatherline" class="mono" style="float:right;text-transform:none;letter-spacing:0"></span></h2>
     <div id="map" role="application" aria-label="Seattle live traffic map"></div>
     <button id="locatebtn" onclick="locateMe()" title="Center on my location" aria-label="My location">⌖</button>
     <button id="fsbtn" onclick="toggleFullscreen()" title="Fullscreen map (Esc to exit)" aria-label="Fullscreen map">⛶</button>
     <div class="legend">
       <span class="meta">Layers:</span>
-      <span class="lyrtoggle" id="lyr_traffic" onclick="toggleLayer('traffic')" title="Traffic flow: green free / amber congested / red severe (lines follow real road paths)">
-        <span class="dot" style="background:var(--good)"></span><span class="dot" style="background:var(--warn);margin-left:-7px"></span><span class="dot" style="background:var(--bad);margin-left:-7px"></span>Traffic <span class="tg">☑</span></span>
-      <span class="lyrtoggle" id="lyr_cams" onclick="toggleLayer('cams')" title="Camera intersections (click a marker for the live feed). Live SDOT/WSDOT traffic cameras currently tracked.">📷 <b id="camcount" style="color:var(--accent)">0</b> cams <span class="tg">☑</span></span>
+      <span class="lyrtoggle" id="lyr_traffic" onclick="toggleLayer('traffic')" title="Traffic flow: green free / yellow congested / orange severe (lines follow real road paths)">
+        <span class="dot" style="background:var(--green-t)"></span><span class="dot" style="background:var(--yellow);margin-left:-6px"></span><span class="dot" style="background:var(--orange);margin-left:-6px"></span>Traffic <span class="tg">☑</span></span>
+      <span class="lyrtoggle" id="lyr_cams" onclick="toggleLayer('cams')" title="Camera intersections (click a marker for the live feed). Live SDOT/WSDOT traffic cameras currently tracked.">📷 <b id="camcount" class="mono" style="color:var(--ink)">0</b> cams <span class="tg">☑</span></span>
       <span class="lyrtoggle" id="lyr_bus" onclick="toggleLayer('bus')" title="Live KC Metro buses currently tracked">
-        <span class="dot" style="background:#62d0ff"></span>Buses <b id="buscount" style="color:#62d0ff">0</b> <span class="tg">☑</span></span>
+        <span class="dot" style="background:var(--blue)"></span>Buses <b id="buscount" class="mono" style="color:var(--blue)">0</b> <span class="tg">☑</span></span>
 
       <span class="lyrtoggle" id="lyr_em" onclick="toggleLayer('em')" title="Seattle Fire Dept Real-Time 911 (data.seattle.gov)">
-        <span class="dot" style="background:#ff8c42"></span><b id="emcount" style="color:var(--warn)">911</b> <span class="tg">☑</span></span>
+        <span class="dot" style="background:var(--orange)"></span><b id="emcount" class="mono" style="color:var(--yellow)">911</b> <span class="tg">☑</span></span>
       <span class="lyrtoggle off" id="lyr_notif" onclick="toggleNotifications()" title="Browser notifications for new traffic-impacting 911 dispatches">
         🔔 Notify <span class="tg">☐</span></span>
       <span id="coverageline" style="margin-left:auto">Click an intersection: live camera + scenario injection</span>
     </div>
   </section>
 
-  <section class="panel" id="sidepanel" aria-label="Incidents and recommendations">
-    <h2>Incident Queue &amp; AI Recommendations</h2>
+  <section class="panel" id="sidepanel" aria-label="Triage inbox and incident workspace">
+    <h2 id="railtitle">Triage Inbox</h2>
     <div class="filterbar" id="filterbar" role="group" aria-label="Filter queue and map"></div>
     <div class="qctl" id="queuecontrols" role="group" aria-label="Incident queue time range, sort and paging">
       <label>Time range
@@ -443,40 +595,53 @@
       </label>
       <span class="qcount" id="q_count"></span>
     </div>
-    <div class="body" id="incidents"></div>
+    <div class="body" id="incidents">
+      <div class="skel s24"></div>
+      <div class="skel"></div>
+      <div class="skel"></div>
+      <div class="skel"></div>
+      <div class="skel s72"></div>
+    </div>
 
   </section>
 
   <div id="bottompanels">
-    <section class="panel" aria-label="Safety metrics and analytics">
-      <h2 style="display:flex;gap:10px;align-items:center">
-        <span id="tab_safety" class="paneltab on" onclick="setPanelTab('safety')">AI Safety Metrics</span>
+    <section class="panel" aria-label="System status and analytics">
+      <h2 style="display:flex;gap:12px;align-items:center">
+        <span id="tab_safety" class="paneltab on" onclick="setPanelTab('safety')">System Status</span>
         <span id="tab_analytics" class="paneltab" onclick="setPanelTab('analytics')">Analytics</span>
-        <span id="tab_road" class="paneltab" onclick="setPanelTab('road')">Alerts <b id="roadcount" style="color:var(--warn)"></b></span>
+        <span id="tab_road" class="paneltab" onclick="setPanelTab('road')">Alerts <b id="roadcount" class="mono" style="color:var(--yellow)"></b></span>
       </h2>
-      <div class="body" id="safety"></div>
+      <div class="body" id="safety">
+        <div class="skel s72"></div>
+        <div class="skel s24"></div>
+      </div>
       <div class="body" id="analytics" style="display:none"></div>
       <div class="body" id="roadalertsbody" style="display:none">
         <div id="alerts"></div>
         <div id="roadalerts"></div>
       </div>
     </section>
-    <section class="panel" aria-label="AI copilot and alerts">
-      <h2>AI Copilot <span style="float:right;text-transform:none;letter-spacing:0;color:var(--dim)">Claude Sonnet 4.6 · grounded</span></h2>
+    <section class="panel" aria-label="AI copilot">
+      <h2>AI Copilot <span class="mono" style="float:right;text-transform:none;letter-spacing:0;color:var(--dim)">claude-sonnet-4-6 · grounded</span></h2>
       <div class="body" id="copilotbody">
         <div id="chatlog" style="font-size:12px;"></div>
-        <div class="row" style="margin-top:6px">
-          <input id="chatin" placeholder="Ask about congestion, incidents, transit…" style="flex:1" aria-label="Copilot question">
+        <div class="row" style="margin-top:8px">
+          <input id="chatin" placeholder="Ask about congestion, incidents, transit…" style="flex:1;font-family:'Segoe UI',sans-serif" aria-label="Copilot question">
           <button class="primary" id="askbtn" onclick="busy(this, askCopilot)">Ask</button>
         </div>
       </div>
     </section>
     <section class="panel" aria-label="Audit trail">
-      <h2>Audit Trail <span id="chainstate"></span>
+      <h2>System Log — Audit Chain <span id="chainstate" class="mono"></span>
         <a id="auditexport" href="#" onclick="exportAudit();return false"
            style="float:right;text-transform:none;letter-spacing:0;font-size:11px"
            title="Download the full hash-chained audit trail as JSONL (legal discovery export; admin/analyst only)">⬇ export</a></h2>
-      <div class="body" id="audit"></div>
+      <div class="body" id="audit">
+        <div class="skel s24"></div>
+        <div class="skel s24"></div>
+        <div class="skel s24"></div>
+      </div>
     </section>
   </div>
 </main>
@@ -556,6 +721,11 @@ let queueTotal = 0;
 let queueReqSeq = 0;       // monotonic guard: ignore stale /api/incidents responses
 let myLocMarker = null;
 
+// ---- Dual-state rail: null = TRIAGE INBOX, incident id = WORKSPACE ----
+let selKey = null;         // selected platform-incident id (workspace state)
+let cursorIdx = 0;         // J/K cursor position in the triage inbox
+let triageRows = [];       // [{kind:"inc"|"em"|"road", id, iid}] in DOM order
+let WLOCK = null;          // key of the in-flight write ("plan:x"/"inc:x")
 
 const emMarkers = {};         // emergency id -> marker
 const interMarkers = {};      // intersection id -> circleMarker
@@ -573,6 +743,17 @@ async function busy(btn, fn){
   finally{ btn?.classList?.remove("busy"); }
 }
 window.busy = busy;
+
+// WRITE-LOCK: any action that appends to the cryptographic audit trail
+// replaces its action row with a locked banner until the write settles.
+async function wlock(key, fn){
+  if(WLOCK) return;            // one audit write at a time per station
+  WLOCK = key;
+  renderIncidents();
+  try{ await fn(); }
+  finally{ WLOCK = null; renderIncidents(); }
+}
+window.wlock = wlock;
 
 function toast(msg){const t=$("toast"); t.textContent=msg;
   t.style.display="block"; clearTimeout(t._h);
@@ -644,8 +825,8 @@ function renderUser(){
   // In Cloudflare Access mode the session is the verified Access identity;
   // "Sign out" goes through Cloudflare's logout endpoint.
   const signout = CF_ACCESS
-    ? `<a style="padding:1px 8px;margin-left:6px" href="${CF_ACCESS_LOGOUT}">Sign out</a>`
-    : `<button style="padding:1px 8px;margin-left:6px" onclick="doLogout()">Sign out</button>`;
+    ? `<a style="padding:1px 8px;margin-left:4px" href="${CF_ACCESS_LOGOUT}">Sign out</a>`
+    : `<button style="padding:1px 8px;margin-left:4px" onclick="doLogout()">Sign out</button>`;
   const via = CF_ACCESS ? " · via Cloudflare Access" : "";
   $("userbadge").innerHTML =
     `signed in: <b>${SESSION.user_id}</b> (${SESSION.role})${via} ${signout}`;
@@ -713,10 +894,10 @@ function connectEvents(){
 }
 
 function congestionColor(c, hasIncident){
-  if(hasIncident) return "#ff3860";
-  if(c>0.7) return "#ff5d5d";
-  if(c>0.45) return "#ffb547";
-  return "#3ddc84";
+  if(hasIncident) return "#FF4F00";
+  if(c>0.7) return "#FF4F00";
+  if(c>0.45) return "#F7B500";
+  return "#3BB273";
 }
 
 let mapFitted = false;
@@ -742,14 +923,69 @@ function toggleFullscreen(){
   setTimeout(()=>map.invalidateSize(), 60);
 }
 window.toggleFullscreen = toggleFullscreen;
-document.addEventListener("keydown", e=>{
-  if(e.key==="Escape" && mapFullscreen) toggleFullscreen();
-});
+
+/* ---------- audible critical-channel alarm (440 Hz double pulse) ------- */
+let audioOn = localStorage.getItem("nexus_audio") !== "0";
+let audioCtx = null, alarmTimer = null;
+function renderAudioBtn(){
+  const b = $("audiobtn");
+  if(!b) return;
+  b.textContent = audioOn ? "🔊" : "🔇";
+  b.classList.toggle("muted", !audioOn);
+}
+function beep440(){
+  if(!audioOn) return;
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state === "suspended") audioCtx.resume();
+    const t0 = audioCtx.currentTime + 0.02;
+    [0, 0.24].forEach(off=>{
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = 440;
+      g.gain.setValueAtTime(0.0001, t0+off);
+      g.gain.exponentialRampToValueAtTime(0.22, t0+off+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+off+0.12);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0+off); o.stop(t0+off+0.16);
+    });
+  }catch(e){ /* audio unavailable — visual channel still flashes */ }
+}
+function criticalUnacked(){
+  return (status_?.incidents||[]).some(
+    i=>i.state==="detected" && (i.severity||0) >= 0.7);
+}
+function updateAlarm(){
+  const on = criticalUnacked();
+  const ef = $("edgeflash");
+  if(ef) ef.classList.toggle("on", on);
+  if(on){
+    if(!alarmTimer){ beep440(); alarmTimer = setInterval(beep440, 4000); }
+  } else if(alarmTimer){
+    clearInterval(alarmTimer); alarmTimer = null;
+  }
+}
+function toggleAudio(){
+  audioOn = !audioOn;
+  localStorage.setItem("nexus_audio", audioOn ? "1" : "0");
+  renderAudioBtn();
+  toast(audioOn
+    ? "Audible alarm ON — 440 Hz pulse while a critical incident is unacknowledged."
+    : "Audible alarm muted (edge flash stays on).");
+  updateAlarm();
+}
+window.toggleAudio = toggleAudio;
+// Browser autoplay policy: create/resume the AudioContext on first gesture.
+document.addEventListener("click", ()=>{
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state === "suspended") audioCtx.resume();
+  }catch(e){}
+}, {once:true});
 
 /* ---------- Citizen-style 911 emergency layer (SFD Real-Time 911) ------- */
-const EM_COLORS = {fire:"#ff5d2e", fire_alarm:"#c97b3d", medical:"#ff8c42",
-  mva:"#ff3860", rescue:"#d957ff", hazmat:"#ffe14d", violence:"#ff2e63",
-  other:"#9aa7bd"};
+const EM_COLORS = {fire:"#FF4F00", fire_alarm:"#F7B500", medical:"#F7B500",
+  mva:"#FF4F00", rescue:"#7FA6C9", hazmat:"#F7B500", violence:"#FF4F00",
+  other:"#98A1AB"};
 const EM_ICONS = {fire:"🔥", fire_alarm:"🔔", medical:"🚑", mva:"🚗",
   rescue:"⛑", hazmat:"☣", violence:"🚨", other:"📟"};
 // fire_alarm displays under the "fire" filter bucket
@@ -778,19 +1014,10 @@ window.toggleFilter = toggleFilter;
 
 /* ---------- compact multi-select checkbox dropdowns -------------------- */
 // One generic dropdown drives both the category filter (queue + map) and
-// the incident-type filter (server-side queue query). Replaces the two
-// rows of pill toggles with two tidy "Categories ▾ / Types ▾" dropdowns.
+// the incident-type filter (server-side queue query).
 let _msddOpen = null;   // id of the currently-open dropdown panel, or null
 
 // Render a single multi-select dropdown into the host element.
-//   host    : container element id
-//   label   : button label ("Categories" / "Incident types")
-//   keys    : array of option keys
-//   labels  : {key -> display label}
-//   state   : {key -> bool} (mutated in place)
-//   counts  : optional {key -> number} badge
-//   onChange: function(key) called after each checkbox toggle
-//   allFn   : window name of the "select all/none" handler
 function buildMsdd(host, label, keys, labels, state, counts, onChangeName, allFnName){
   const on = keys.filter(k=>state[k]).length;
   const total = keys.length;
@@ -856,8 +1083,8 @@ function locateMe(){
   navigator.geolocation.getCurrentPosition(pos=>{
     const ll = [pos.coords.latitude, pos.coords.longitude];
     if(myLocMarker) map.removeLayer(myLocMarker);
-    myLocMarker = L.circleMarker(ll, {radius:8, color:"#4da3ff", weight:3,
-      fillColor:"#4da3ff", fillOpacity:.4}).addTo(map)
+    myLocMarker = L.circleMarker(ll, {radius:8, color:"#7FA6C9", weight:3,
+      fillColor:"#7FA6C9", fillOpacity:.4}).addTo(map)
       .bindTooltip("You are here");
     map.setView(ll, 15);
   }, err=>toast("Location failed: "+err.message), {timeout:10000});
@@ -996,7 +1223,7 @@ function renderEmergencies(){
     const ago = fmtAgo(e.at);
     m.bindTooltip(`${EM_ICONS[e.category]||"📟"} ${esc(e.type)} · ${ago}`);
     m.bindPopup(`<b>${EM_ICONS[e.category]||"📟"} ${esc(e.type)}</b><br>
-      <span style="color:#8fa3c2">${esc(e.address)} · dispatched ${ago}<br>
+      <span style="color:#98A1AB">${esc(e.address)} · dispatched ${ago}<br>
       SFD Real-Time 911 · ${e.traffic_impacting?"⚠ likely traffic impact":"no expected traffic impact"}</span>`);
     emMarkers[e.id] = m;
   });
@@ -1005,7 +1232,7 @@ function renderEmergencies(){
   }
 }
 
-// Waze crowdsourced jam polylines (purple dashed) — part of the Traffic
+// Waze crowdsourced jam polylines (dashed yellow) — part of the Traffic
 // layer, drawn over the segment flow lines. Empty until the Waze for
 // Cities partner feed (NEXUS_WAZE_FEED_URL) is configured server-side.
 function renderWazeJams(){
@@ -1016,7 +1243,7 @@ function renderWazeJams(){
     seen.add(j.id);
     let line = wazeJamLines[j.id];
     if(!line){
-      line = L.polyline(j.line, {color:"#b06cff", weight:5, opacity:.85,
+      line = L.polyline(j.line, {color:"#F7B500", weight:5, opacity:.85,
                                  dashArray:"6,6"}).addTo(segLayer);
       wazeJamLines[j.id] = line;
     }
@@ -1045,16 +1272,16 @@ function popupHtml(inter){
   const liveCam = (incCamId && cams.find(c=>c.live && c.id===incCamId))
                   || cams.find(c=>c.live);
   let html = `<b>${esc(inter.name)}</b><br>
-    <span style="color:#8fa3c2">${inter.id} · congestion ${(inter.congestion*100).toFixed(0)}%`
+    <span style="color:#98A1AB" class="mono">${inter.id} · congestion ${(inter.congestion*100).toFixed(0)}%`
     + (inter.ems_corridor ? " · EMS corridor" : "") + `</span><br>`;
   if(liveCam){
     const box = "camb_"+liveCam.id;
     html += `<div id="${box}">
       <img class="popimg" alt="Live camera: ${esc(liveCam.live_name||inter.name)}">
-      <span class="caminfo" style="color:#8fa3c2;font-size:11px">LIVE ${esc((liveCam.live_type||'sdot').toUpperCase())} camera · ${esc(liveCam.live_name||"")}<br>loading frame…</span><br>
+      <span class="caminfo" style="color:#98A1AB;font-size:11px">LIVE ${esc((liveCam.live_type||'sdot').toUpperCase())} camera · ${esc(liveCam.live_name||"")}<br>loading frame…</span><br>
       <button onclick="busy(this,()=>loadCamFrame('${liveCam.id}','${box}',true))">⟳ Refresh feed</button>
       <button onclick="busy(this,()=>aiAnalyze('${inter.id}','${box}'))">🤖 AI vision analysis</button>
-      <div class="aiout" style="font-size:11px;color:#8fa3c2;margin-top:4px"></div>
+      <div class="aiout" style="font-size:11px;color:#98A1AB;margin-top:4px"></div>
     </div>`;
     setTimeout(()=>loadCamFrame(liveCam.id, box, false), 30);
   }
@@ -1071,7 +1298,7 @@ async function aiAnalyze(iid, boxId){
     if(!a.available) throw new Error(a.error||"vision unavailable");
     const inc = a.incident_visible;
     if(out) out.innerHTML =
-      `<div class="planchips" style="margin:2px 0 4px">
+      `<div class="govchips" style="margin:2px 0 4px;padding:0">
         <span class="pchip ${inc?"warn":"good"}">incident: ${inc?"YES":"none"}</span>
         <span class="pchip">congestion: ${esc(a.congestion_visible)}</span>
         <span class="pchip">visibility: ${esc(a.visibility)}</span>
@@ -1180,7 +1407,7 @@ function renderMap(){
     let m = vehMarkers[v.id];
     if(!m){
       m = L.circleMarker([v.lat, v.lon], {
-        radius: 3.5, color:"#62d0ff", weight:1, fillColor:"#62d0ff",
+        radius: 3.5, color:"#7FA6C9", weight:1, fillColor:"#7FA6C9",
         fillOpacity:.9,
       }).addTo(vehLayer);
       m.bindTooltip((layer)=>{
@@ -1235,7 +1462,7 @@ window.injectDemo = injectDemo;
 // Cache vision results per incident so SSE re-renders don't wipe them.
 const visionCache = {};   // incident_id -> html
 function visionHtml(a){
-  return `<div class="planchips" style="margin:3px 0">
+  return `<div class="govchips" style="margin:4px 0;padding:0">
       <span class="pchip ${a.incident_visible?"warn":"good"}">visual incident: ${a.incident_visible?"CONFIRMED":"not visible"}</span>
       <span class="pchip">congestion: ${esc(a.congestion_visible)}</span>
       <span class="pchip">${Math.round(a.confidence_pct)}% conf</span>
@@ -1262,12 +1489,13 @@ function fmtAgo(ts){
   if(s < 172800) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ago`;
   return `${Math.floor(s/86400)}d ago`;   // long-running (e.g. construction)
 }
-function sevColor(s){ return s>0.7 ? "var(--bad)" : s>0.4 ? "var(--warn)" : "var(--good)"; }
+function sevColor(s){
+  return s>0.7 ? "var(--orange)" : s>0.4 ? "var(--yellow)" : "var(--green-t)";
+}
 
 // Click-to-expand: WHY the platform classified this activity as this
-// incident type. For AI-vision detections this is the Claude Haiku
-// assessment + its confidence; for the edge CV layer it's the rule that
-// fired. Returns "" when no justification was recorded (legacy incidents).
+// incident type. For AI-vision detections this is the model assessment +
+// its confidence; for the edge CV layer it's the rule that fired.
 function aiJustificationHtml(inc){
   if(!inc.ai_justification) return "";
   const conf = (inc.ai_confidence !== null && inc.ai_confidence !== undefined)
@@ -1279,7 +1507,7 @@ function aiJustificationHtml(inc){
   return `<details class="aiwhy" data-dk="aiwhy-${inc.id}"><summary>Why was this classified as
     "${esc(inc.type.replace(/_/g," "))}"?</summary>
     <div class="aibody">
-      <div class="planchips" style="margin:2px 0 4px">
+      <div class="govchips" style="margin:2px 0 4px;padding:0">
         <span class="pchip">source: ${src}</span>${conf}
         ${inc.camera_id?`<span class="pchip">cam ${esc(inc.camera_id)}</span>`:""}
       </div>
@@ -1324,11 +1552,7 @@ function queueLimit(){
 }
 
 // Resolve the active time-range selector into an absolute [since, until]
-// epoch window (seconds). Used so the 911 dispatch list honors the SAME
-// selector as the incident queue. `null` = unbounded on that side.
-//   - "abs"  → the From/To datetime inputs
-//   - "0"    → all time (both null)
-//   - N (s)  → [now - N, now]
+// epoch window (seconds). `null` = unbounded on that side.
 function emTimeWindow(){
   const v = ($("q_range") ? $("q_range").value : incidentQuery.range) || "0";
   const now = Date.now() / 1000;
@@ -1381,10 +1605,10 @@ async function loadIncidents(){
   } else if(range !== "0"){
     params.set("window", range);
   }
-  // Sequence guard: a dropdown change races with the 3s SSE refresh + 15s
+  // Sequence guard: a dropdown change races with the SSE refresh + 15s
   // poll, all calling loadIncidents(). Without this, a slower earlier
   // request can resolve AFTER the user's newer one and overwrite it with
-  // stale data — making the controls feel "delayed" or "not working".
+  // stale data.
   const mySeq = ++queueReqSeq;
   try{
     const r = await api("/api/incidents?" + params.toString());
@@ -1396,29 +1620,154 @@ async function loadIncidents(){
 }
 window.loadIncidents = loadIncidents;
 
+/* ======================================================================
+   DUAL-STATE RIGHT RAIL
+   TRIAGE INBOX (default)  ⇄  FOCUSED INCIDENT WORKSPACE (selKey set)
+   ====================================================================== */
+
+function findIncident(id){
+  return (queueIncidents||[]).find(i=>i.id===id)
+      || (status_?.incidents||[]).find(i=>i.id===id) || null;
+}
+
+function selectIncident(id){
+  selKey = id;
+  renderIncidents();
+  const inc = findIncident(id);
+  if(inc) focusIntersection(inc.intersection_id);
+}
+window.selectIncident = selectIncident;
+
+function backToTriage(){
+  selKey = null;
+  renderIncidents();
+}
+window.backToTriage = backToTriage;
+
+// Central rail renderer — keeps the historical name so every existing
+// call site (SSE refresh, filters, queue controls, emergency fetch)
+// re-renders whichever rail state is active.
 function renderIncidents(){
+  const side = $("sidepanel");
+  if(selKey){
+    const inc = findIncident(selKey);
+    if(inc){
+      side.classList.add("wsmode");
+      $("railtitle").textContent = "Incident Workspace";
+      renderWorkspace(inc);
+      return;
+    }
+    // Incident resolved/aged out server-side — deterministic fallback.
+    selKey = null;
+  }
+  side.classList.remove("wsmode");
+  $("railtitle").textContent = "Triage Inbox";
+  renderTriage();
+}
+
+/* ---------- TRIAGE INBOX ---------- */
+
+// True when this platform incident belongs in the CRITICAL ACTION tier.
+function isCriticalIncident(inc, plans){
+  if(inc.state === "detected") return true;
+  if((inc.severity||0) >= 0.7) return true;
+  return plans.some(p=>p.incident_id===inc.id && p.status==="pending_approval");
+}
+
+function incidentRowHtml(inc, plans, tier){
+  const clusterName = inc.intersection_name || interName(inc.intersection_id);
+  const name = inc.camera_name || clusterName;
+  const sc = sevColor(inc.severity);
+  const latest = plans.find(p=>p.incident_id===inc.id);
+  const pending = latest && latest.status==="pending_approval";
+  const tags = [
+    inc.state==="detected" ? `<span class="tag orange">ACK REQ</span>`
+      : `<span class="tag">${esc(inc.state)}</span>`,
+    pending ? `<span class="tag yellow">PLAN PENDING</span>` : "",
+    inc.detection_source==="ai_vision" ? `<span class="tag">AI VISION</span>`
+      : inc.detection_source==="sfd_911" ? `<span class="tag">911</span>` : "",
+  ].join("");
+  // Field-mode inline actions (visible ≤640px only): approve/reject the
+  // pending plan, or acknowledge, without opening the workspace.
+  let act = "";
+  if(WLOCK && (WLOCK==="inc:"+inc.id || (latest && WLOCK==="plan:"+latest.plan_id))){
+    act = `<div class="wlock" style="width:100%;margin-top:8px">WRITE-LOCK · COMMITTING TO AUDIT TRAIL…</div>`;
+  } else if(pending){
+    act = `<div class="rowact">
+      <button class="approve" style="background:var(--green);border-color:#00A34C;color:#fff"
+        onclick="event.stopPropagation();gApprove('${latest.plan_id}')">✓ APPROVE</button>
+      <button style="border-color:var(--orange);color:var(--orange)"
+        onclick="event.stopPropagation();gReject('${latest.plan_id}')">✕ REJECT</button>
+    </div>`;
+  } else if(inc.state==="detected"){
+    act = `<div class="rowact">
+      <button onclick="event.stopPropagation();gAck('${inc.id}')">✋ ACKNOWLEDGE</button>
+    </div>`;
+  }
+  return `<div class="trow t${tier}" data-key="inc:${inc.id}"
+    onclick="selectIncident('${inc.id}')" title="Open incident workspace (Enter)">
+    <span class="tsev" style="color:${sc}">${(inc.severity*100).toFixed(0)}<small>SEV</small></span>
+    <div class="tmain">
+      <div class="tline1"><b>${esc(inc.type.replace(/_/g," "))}</b>${tags}
+        <span class="tage" title="${fmtTime(inc.detected_at)}">${fmtAgo(inc.detected_at)}</span></div>
+      <div class="tline2">📍 ${esc(name)}</div>
+      ${act}
+    </div>
+  </div>`;
+}
+
+function emRowHtml(e, tier){
+  const color = EM_COLORS[e.category] || EM_COLORS.other;
+  return `<div class="trow t${tier}" data-key="em:${e.id}"
+    onclick="focusEmergency('${e.id}')" title="Show on map">
+    <span class="tsev" style="color:${color};font-size:14px">${EM_ICONS[e.category]||"📟"}<small>911</small></span>
+    <div class="tmain">
+      <div class="tline1"><b>${esc(e.type)}</b>
+        ${e.traffic_impacting?'<span class="tag yellow">TRAFFIC IMPACT</span>':""}
+        <span class="tage" title="${fmtTime(e.at)}">${fmtAgo(e.at)}</span></div>
+      <div class="tline2">📍 ${esc(e.address)}</div>
+    </div>
+  </div>`;
+}
+
+function roadRowHtml(r){
+  if(r.kind==="wsdot"){
+    const a = r.a;
+    const hi = (a.priority==="Highest"||a.priority==="High");
+    return `<div class="trow t2" data-key="road:w${a.updated_at}:${esc(a.road||"")}">
+      <span class="tsev" style="color:${hi?"var(--orange)":"var(--yellow)"};font-size:14px">🛣<small>WSDOT</small></span>
+      <div class="tmain">
+        <div class="tline1"><b>${esc(a.category)}</b>
+          ${hi?'<span class="tag orange">HIGH PRIORITY</span>':""}
+          <span class="tage" title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span></div>
+        <div class="tline2">${esc(a.road)}${a.road?" — ":""}${esc(a.headline)}</div>
+      </div>
+    </div>`;
+  }
+  const w = r.w;
+  return `<div class="trow t2" data-key="road:z${w.at}">
+    <span class="tsev" style="color:var(--yellow);font-size:14px">〰<small>WAZE</small></span>
+    <div class="tmain">
+      <div class="tline1"><b>${esc(w.type)}</b>
+        <span class="tag">REL ${w.reliability}/10</span>
+        <span class="tage" title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span></div>
+      <div class="tline2">📍 ${esc(w.street||"")}</div>
+    </div>
+  </div>`;
+}
+
+function renderTriage(){
   const wrap = $("incidents");
-  // Capture which <details> are open so an SSE-driven re-render doesn't
-  // collapse the expander the operator just opened (keyed by data-dk).
   const _openDK = new Set();
   wrap.querySelectorAll('details[open][data-dk]').forEach(d=>_openDK.add(d.dataset.dk));
-  // The "Traffic" category filter gates the whole platform-incident queue;
-  // the per-type filters + time range are applied server-side in loadIncidents.
+
   const incidents = filterOn.traffic_incidents ? (queueIncidents||[]) : [];
   const plans = status_?.plans || [];
-  // The 911 dispatch list must honor the SAME time-range selector as the
-  // incident queue above it (operators expect "Last 15 min" to mean 15 min
-  // everywhere). Compute the active [since, until] window from the selector;
-  // the feed itself only fetches the last hour, so ranges wider than that are
-  // capped by available data.
   const emWin = emTimeWindow();
   const emVisible = emergencies.filter(e =>
     (filterOn[emFilterKey(e.category)] ?? true)
     && (emWin.since === null || e.at >= emWin.since)
     && (emWin.until === null || e.at <= emWin.until));
-  // Road alerts (WSDOT + Waze) join the unified feed, honoring the same
-  // Categories filter and time-range selector — a "Last 24 hours" window
-  // naturally hides weeks-old construction notices.
   const roadAll = filterOn.road ? [
     ...(highwayAlerts||[]).map(a=>({kind:"wsdot", at:a.updated_at||0, a})),
     ...(wazeAlerts||[]).map(w=>({kind:"waze", at:w.at||0, w})),
@@ -1427,148 +1776,202 @@ function renderIncidents(){
     (emWin.since === null || r.at >= emWin.since)
     && (emWin.until === null || r.at <= emWin.until));
 
-  // Result count for the current query window.
   const qc = $("q_count");
   if(qc) qc.textContent = filterOn.traffic_incidents
     ? `${incidents.length}${queueTotal>incidents.length?" of "+queueTotal:""} incident${incidents.length===1?"":"s"}`
     : "traffic filter off";
+
   if(!incidents.length && !emVisible.length && !roadVisible.length){
-    wrap.innerHTML = `<p class="meta">No incidents match the current time range / category filters.</p>
-      <p class="meta" style="margin-top:6px">Widen the time range above, or click any
+    triageRows = [];
+    wrap.innerHTML = `<p class="meta">No events match the current time range / category filters.</p>
+      <p class="meta" style="margin-top:8px">Widen the time range above, or click any
       intersection on the map to view its live camera, run AI vision analysis,
       or inject a scenario. Or:</p>
       <button class="primary" style="margin-top:8px" onclick="busy(this, injectDemo)">
         ⚡ Inject demo collision (random downtown intersection)</button>`;
     return;
   }
-  let html = "";
-  incidents.forEach(inc=>{
-    const plansFor = plans.filter(p=>p.incident_id===inc.id);
-    const latest = plansFor[0];
-    // Location headline: for camera detections, use the DETECTING camera's
-    // name — the registry clusters several distinct cameras onto one map
-    // point, and the cluster's label (first camera) can differ from the
-    // camera that actually saw the incident (e.g. cluster "I-5 @ Olive Way"
-    // vs detecting cam "Denny Way & Yale St"). The headline must match the
-    // frozen-frame evidence, never contradict it.
-    const clusterName = inc.intersection_name || interName(inc.intersection_id);
-    const name = inc.camera_name || clusterName;
-    const sc = sevColor(inc.severity);
-    const aiChip = inc.detection_source === "ai_vision"
-      ? `<span class="pchip warn" title="Detected autonomously by the AI vision sweep (Claude Haiku on live camera frames)">👁 AI-detected</span>`
-      : inc.detection_source === "sfd_911"
-      ? `<span class="pchip warn" title="Raised from a Seattle Fire Dept Real-Time 911 dispatch">🚨 911</span>` : "";
-    html += `<div class="card" style="border-left:3px solid ${sc}">
-      <h3 style="display:flex;align-items:center;gap:6px">
-        ⚠ ${inc.type.replace(/_/g," ").toUpperCase()}${aiChip}
-        <span class="state" style="margin-left:auto">${inc.state}</span></h3>
-      <div style="font-size:13px;color:var(--text);cursor:pointer"
-        title="Show on map" onclick="focusIntersection('${inc.intersection_id}')">📍 ${esc(name)}</div>
-      <div class="sevwrap">
-        <span class="meta">severity</span>
-        <span class="sevbar"><i style="width:${(inc.severity*100).toFixed(0)}%;background:${sc}"></i></span>
-        <span class="meta" style="color:${sc};font-weight:700">${(inc.severity*100).toFixed(0)}%</span>
-        <span class="meta" style="margin-left:auto" title="${fmtTime(inc.detected_at)}">${fmtTime(inc.detected_at)} · ${fmtAgo(inc.detected_at)}</span>
-      </div>
-      ${aiJustificationHtml(inc)}`;
-    // FROZEN detection-time frame — what the detector actually saw (NOT a
-    // newer live image). Falls back to nothing if no frame was captured.
-    if(inc.has_detection_frame){
-      html += `<img class="camthumb" src="/api/incident/frame?id=${encodeURIComponent(inc.id)}&token=${encodeURIComponent(TOKEN)}"
-        alt="Detection-time frame for ${name}" title="Frame captured at detection time — click to expand"
-        onclick="this.classList.toggle('expanded')"
-        onerror="this.style.display='none'">
-        <span class="frozen-tag" title="This is the exact camera frame at the moment of detection (${fmtTime(inc.detected_at)}), not the latest live image. Several cameras can share one intersection — this frame is from the specific feed that detected the incident.">📌 frame frozen at detection · ${fmtTime(inc.detected_at)}${inc.camera_name?` · 📷 ${esc(inc.camera_name)}`:""}</span>
-        <div class="row" style="gap:0">
-          <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))" title="Re-fetch and re-analyze the live feed from this exact camera (${esc(inc.camera_name||inc.camera_id||'')})">👁 Re-check this camera live</button>
-        </div>
-        <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
-    }
-    if(inc.state==="detected"){
-      html += `<button class="primary" onclick="busy(this,()=>ack('${inc.id}'))">Acknowledge <span style="opacity:.55">Ctrl+Shift+K</span></button>`;
-    } else if(!latest || ["rejected","reverted"].includes(latest.status)){
-      html += `<button class="primary" onclick="busy(this,()=>recommend('${inc.id}'))">Request AI Recommendation</button>`;
-    }
-    if(latest){ html += renderPlan(latest, inc); }
-    if(["monitoring","mitigating","acknowledged"].includes(inc.state)){
-      html += `<button onclick="busy(this,()=>resolveInc('${inc.id}'))">Close Incident</button>`;
-    }
-    html += `</div>`;
-  });
 
-  // Sort direction + page size shared by every section below. byTime is an
+  // Sort direction + page size shared by every tier. byTime is an
   // explicit comparator — "newest first" (desc) means larger timestamps
-  // sort earlier. (A previous sign-factor version double-negated and
-  // inverted the order; keep this spelled out.)
+  // sort earlier. (Never multiply sign factors into comparators.)
   const _ord = ($("q_order") ? $("q_order").value : "desc");
   const byTime = (ta, tb) => _ord === "asc" ? (ta - tb) : (tb - ta);
   const _limit = queueLimit();
 
-  // 911 events (Citizen-style) appear below platform incidents, compact,
-  // click-to-locate on the map. Traffic-impacting calls first.
-  if(emVisible.length){
-    html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
-      letter-spacing:.5px">911 dispatches · ${esc(emRangeLabel())} · SFD live</div>`;
+  // ---- Tier assignment (deduplicated: each event in exactly one tier) --
+  const critInc = [], monInc = [];
+  incidents.forEach(inc=>{
+    (isCriticalIncident(inc, plans) ? critInc : monInc).push(inc);
+  });
+  // Severity-ranked inside the critical tier, then operator sort.
+  critInc.sort((a,b)=>(b.severity - a.severity) || byTime(a.detected_at, b.detected_at));
+  const critEm = [], monEm = [];
+  emVisible.forEach(e=>{ (e.traffic_impacting ? critEm : monEm).push(e); });
+  critEm.sort((a,b)=>byTime(a.at, b.at));
+  monEm.sort((a,b)=>byTime(a.at, b.at));
+  roadVisible.sort((x,y)=>byTime(x.at, y.at));
 
-    // Honor the same Sort selector as the incident queue. Traffic-impacting
-    // calls still surface first; within each group, newest- or oldest-first
-    // follows the dropdown.
-    const sorted = [...emVisible].sort((a,b)=>
-      (b.traffic_impacting - a.traffic_impacting) || byTime(a.at, b.at));
+  const rows = [];        // rebuilt cursor model, matching DOM order
+  let html = "";
 
-    sorted.slice(0, _limit).forEach(e=>{
-      const color = EM_COLORS[e.category] || EM_COLORS.other;
-      html += `<div class="card emcard" style="border-left:3px solid ${color};padding:6px 10px"
-        onclick="focusEmergency('${e.id}')" title="Show on map">
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-          <span>${EM_ICONS[e.category]||"📟"}</span>
-          <b>${esc(e.type)}</b>
-          ${e.traffic_impacting?'<span class="pchip warn">traffic impact</span>':""}
-          <span class="meta" style="margin-left:auto" title="${fmtTime(e.at)}">${fmtAgo(e.at)}</span>
-        </div>
-        <div class="meta">📍 ${esc(e.address)}</div>
-      </div>`;
+  const nCrit = critInc.length + critEm.length;
+  if(nCrit){
+    html += `<div class="tierhead th1">Critical Action <span class="tn">${nCrit}</span></div>`;
+    critInc.forEach(inc=>{
+      html += incidentRowHtml(inc, plans, 1);
+      rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
+    });
+    critEm.slice(0, _limit).forEach(e=>{
+      html += emRowHtml(e, 1);
+      rows.push({kind:"em", id:e.id});
+    });
+  }
+  const nMon = monInc.length + monEm.length + roadVisible.length;
+  if(nMon){
+    html += `<div class="tierhead th2">Monitored Anomalies <span class="tn">${nMon}</span></div>`;
+    monInc.forEach(inc=>{
+      html += incidentRowHtml(inc, plans, 2);
+      rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
+    });
+    monEm.slice(0, _limit).forEach(e=>{
+      html += emRowHtml(e, 2);
+      rows.push({kind:"em", id:e.id});
+    });
+    roadVisible.slice(0, _limit).forEach(r=>{
+      html += roadRowHtml(r);
+      rows.push({kind:"road", id:null});
     });
   }
 
-  // Road alerts (WSDOT highway alerts + Waze reports) — honoring the same
-  // sort order and page size, within the same time window.
-  if(roadVisible.length){
-    html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
-      letter-spacing:.5px">Road alerts · ${esc(emRangeLabel())} · WSDOT${wazeAlerts.length?"/Waze":""} live</div>`;
-    roadVisible.sort((x,y)=>byTime(x.at, y.at)).slice(0, _limit).forEach(r=>{
-      if(r.kind==="wsdot"){
-        const a = r.a;
-        const hi = (a.priority==="Highest"||a.priority==="High");
-        html += `<div class="card" style="border-left:3px solid ${hi?"var(--bad)":"var(--warn)"};padding:6px 10px">
-          <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-            <span>🛣</span><b>WSDOT: ${esc(a.category)}</b>
-            ${hi?'<span class="pchip warn">high priority</span>':""}
-            <span class="meta" style="margin-left:auto" title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span></div>
-          <div class="meta">${esc(a.road)}${a.road?" — ":""}${esc(a.headline)}</div>
-        </div>`;
-      } else {
-        const w = r.w;
-        html += `<div class="card" style="border-left:3px solid #b06cff;padding:6px 10px">
-          <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-            <span>〰</span><b>Waze: ${esc(w.type)}</b>
-            <span class="pchip">reliability ${w.reliability}/10</span>
-            <span class="meta" style="margin-left:auto" title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span></div>
-          <div class="meta">📍 ${esc(w.street||"")}</div>
-        </div>`;
-      }
-    });
-  }
+  triageRows = rows;
+  if(cursorIdx >= triageRows.length) cursorIdx = Math.max(0, triageRows.length-1);
   wrap.innerHTML = html;
-  // Restore the expanders the operator had open before this re-render.
+  paintCursor(false);
+  _openDK.forEach(k=>{ const el = wrap.querySelector('details[data-dk="'+k+'"]'); if(el) el.open = true; });
+}
+
+/* ---------- J/K cursor ---------- */
+function paintCursor(scroll){
+  const rows = document.querySelectorAll('#incidents .trow');
+  rows.forEach((el,i)=>el.classList.toggle('cur', i===cursorIdx));
+  if(scroll && rows[cursorIdx])
+    rows[cursorIdx].scrollIntoView({block:"nearest"});
+}
+function moveCursor(d){
+  if(selKey || !triageRows.length) return;
+  cursorIdx = Math.min(triageRows.length-1, Math.max(0, cursorIdx + d));
+  paintCursor(true);
+}
+function openCursor(){
+  const r = triageRows[cursorIdx];
+  if(!r) return;
+  if(r.kind==="inc") selectIncident(r.id);
+  else if(r.kind==="em") focusEmergency(r.id);
+}
+function focusCursorOnMap(){
+  if(selKey){
+    const inc = findIncident(selKey);
+    if(inc) focusIntersection(inc.intersection_id);
+    return;
+  }
+  const r = triageRows[cursorIdx];
+  if(!r) return;
+  if(r.kind==="inc") focusIntersection(r.iid);
+  else if(r.kind==="em") focusEmergency(r.id);
+}
+
+/* ---------- FOCUSED INCIDENT WORKSPACE ---------- */
+
+function renderWorkspace(inc){
+  const wrap = $("incidents");
+  const _openDK = new Set();
+  wrap.querySelectorAll('details[open][data-dk]').forEach(d=>_openDK.add(d.dataset.dk));
+  const plans = status_?.plans || [];
+  const plansFor = plans.filter(p=>p.incident_id===inc.id);
+  const latest = plansFor[0];
+  const clusterName = inc.intersection_name || interName(inc.intersection_id);
+  const name = inc.camera_name || clusterName;
+  const sc = sevColor(inc.severity);
+  const srcTag = inc.detection_source === "ai_vision"
+    ? `<span class="tag yellow" title="Detected autonomously by the AI vision sweep on live camera frames">AI VISION</span>`
+    : inc.detection_source === "sfd_911"
+    ? `<span class="tag yellow" title="Raised from a Seattle Fire Dept Real-Time 911 dispatch">911</span>` : "";
+
+  // W0 return bar + W1 identity + W2 severity + W3 location
+  let html = `
+    <div class="wsbar">
+      <button onclick="backToTriage()" title="Back to triage inbox (Esc)">◀ TRIAGE</button>
+      <span class="wsid" title="${esc(inc.id)}">${esc(inc.id)}</span>
+    </div>
+    <div class="wstitle">
+      <b>${esc(inc.type.replace(/_/g," "))}</b>
+      ${inc.state==="detected" ? `<span class="tag orange">ACK REQ</span>`
+        : `<span class="state">${esc(inc.state)}</span>`}
+      ${srcTag}
+    </div>
+    <div class="sevblock">
+      <span class="sevfig" style="color:${sc}">${(inc.severity*100).toFixed(0)}<span style="font-size:11px;color:var(--dim)"> SEV</span></span>
+      <span class="sevbar"><i style="width:${(inc.severity*100).toFixed(0)}%;background:${sc}"></i></span>
+      <span class="meta mono" title="${fmtTime(inc.detected_at)}">${fmtTime(inc.detected_at)} · ${fmtAgo(inc.detected_at)}</span>
+    </div>
+    <div class="wsloc">
+      <span>📍 ${esc(name)}</span>
+      <button class="locfocus" style="margin:0"
+        onclick="focusIntersection('${inc.intersection_id}')">FOCUS MAP <span style="opacity:.55">SPACE</span></button>
+    </div>`;
+
+  // W4 camera evidence: FROZEN detection-time frame (what the detector saw)
+  if(inc.has_detection_frame){
+    html += `<img class="camthumb" src="/api/incident/frame?id=${encodeURIComponent(inc.id)}&token=${encodeURIComponent(TOKEN)}"
+      alt="Detection-time frame for ${esc(name)}" title="Frame captured at detection time — click to expand"
+      onclick="this.classList.toggle('expanded')"
+      onerror="this.style.display='none'">
+      <span class="frozen-tag" title="This is the exact camera frame at the moment of detection (${fmtTime(inc.detected_at)}), not the latest live image.">FRAME FROZEN AT DETECTION · ${fmtTime(inc.detected_at)}${inc.camera_name?` · ${esc(inc.camera_name)}`:""}</span>
+      <div class="row" style="gap:0">
+        <button onclick="busy(this,()=>aiVerifyIncident('${inc.intersection_id}','${inc.id}'))" title="Re-fetch and re-analyze the live feed from this exact camera (${esc(inc.camera_name||inc.camera_id||'')})">👁 RE-CHECK CAMERA LIVE</button>
+      </div>
+      <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
+  }
+
+  // W5 AI classification rationale
+  html += aiJustificationHtml(inc);
+
+  // Ack / recommend controls above the governance block
+  if(WLOCK === "inc:"+inc.id){
+    html += `<div class="wlock">WRITE-LOCK · COMMITTING TO HASH-CHAINED AUDIT TRAIL…</div>`;
+  } else if(inc.state==="detected"){
+    html += `<button class="primary" style="width:100%;min-height:40px;font-weight:700"
+      onclick="gAck('${inc.id}')">✋ ACKNOWLEDGE <span style="opacity:.55;font-size:10px">CTRL+SHIFT+K</span></button>`;
+  } else if(!latest || ["rejected","reverted"].includes(latest.status)){
+    html += `<button class="primary" style="width:100%;min-height:40px;font-weight:700"
+      onclick="busy(this,()=>recommend('${inc.id}'))">🤖 REQUEST AI RECOMMENDATION</button>`;
+  }
+
+  // W6 governance block
+  if(latest){ html += renderGovernance(latest, inc); }
+
+  if(["monitoring","mitigating","acknowledged"].includes(inc.state)){
+    html += `<button style="width:100%;margin-top:8px"
+      onclick="wlock('inc:${inc.id}', ()=>resolveInc('${inc.id}'))">CLOSE INCIDENT</button>`;
+  }
+
+  // W7 hash-chained timeline
+  html += incidentTimeline(inc);
+
+  wrap.innerHTML = html;
   _openDK.forEach(k=>{ const el = wrap.querySelector('details[data-dk="'+k+'"]'); if(el) el.open = true; });
 }
 
 function interName(iid){
   return (grid?.intersections||[]).find(x=>x.id===iid)?.name || iid;
 }
+function interCycle(iid){
+  const i = (grid?.intersections||[]).find(x=>x.id===iid);
+  return i && i.cycle_seconds ? Math.round(i.cycle_seconds) : null;
+}
 
-/* ---------- incident timeline from the audit trail (Phase 6) ---------- */
+/* ---------- incident timeline from the audit trail ---------- */
 function incidentTimeline(inc){
   // Audit entries tied to this incident: explicit incident_id in
   // after_state, or actions targeting its intersection after detection.
@@ -1596,78 +1999,107 @@ function incidentTimeline(inc){
     if(seen.has(k)) return;
     seen.add(k); uniq.push(ev);
   });
-  return `<details class="why"><summary>Timeline (${uniq.length} events — hash-chained audit)</summary>
+  return `<details class="why" data-dk="tl-${inc.id}"><summary>Timeline (${uniq.length} events — hash-chained audit)</summary>
     <div class="whytext">` + uniq.map(ev=>
-      `<div style="display:flex;gap:6px;padding:1px 0">
+      `<div style="display:flex;gap:8px;padding:1px 0">
         <span>${ev.icon}</span>
-        <span><b style="color:var(--text)">${ev.label}</b> · ${ev.actor}
-          ${ev.outcome && ev.outcome!=="ok" ? ` · <span style="color:var(--bad)">${ev.outcome}</span>` : ""}</span>
-        <span style="margin-left:auto;white-space:nowrap" title="${fmtTime(ev.at)}">${fmtAgo(ev.at)}</span>
+        <span><b style="color:var(--ink)">${ev.label}</b> · ${ev.actor}
+          ${ev.outcome && ev.outcome!=="ok" ? ` · <span style="color:var(--orange)">${ev.outcome}</span>` : ""}</span>
+        <span class="mono" style="margin-left:auto;white-space:nowrap" title="${fmtTime(ev.at)}">${fmtAgo(ev.at)}</span>
       </div>`).join("") + `</div></details>`;
 }
 
-function renderPlan(p, inc){
+/* ---------- AI COPILOT GOVERNANCE BLOCK ----------
+   Cold binary engineering comparison (current vs proposed), explicit
+   cryptographic signature, physical approve/reject action targets. */
+function renderGovernance(p, inc){
   const isLLM = (p.model_version||"").includes("sonnet");
-  let html = `<div style="border-top:1px dashed var(--line); margin-top:6px; padding-top:6px;">
-    <div class="meta"><b style="color:var(--text)">AI Recommendation</b>
-      · confidence <span class="conf">${p.confidence_score}%</span>
-      · <span title="${p.plan_id} · ${p.model_version}">${isLLM?"Claude Sonnet 4.6":"expert system"}</span></div>`;
+  let html = `<div class="gov">
+    <div class="govhead">AI Mitigation Proposal
+      <span class="mdl" title="${esc(p.plan_id)}">${isLLM?"claude-sonnet-4-6":"expert-system"}</span>
+      <span class="conf">CONF ${p.confidence_score}%</span></div>`;
+
   if(["blocked_constraint","blocked_hallucination","suppressed_provenance","withheld_confidence"].includes(p.status)){
-    html += `<div class="blocked">⛔ ${p.status.replace(/_/g," ")}: ${p.block_reason||""}</div></div>`;
+    html += `<div class="blocked">⛔ ${p.status.replace(/_/g," ").toUpperCase()}: ${esc(p.block_reason||"")}</div></div>`;
     return html;
   }
-  // structured action rows: what will actually change (click = show on map)
+
+  // Engineering comparison: signal / phase / current cycle / proposed delta.
   if((p.operations||[]).length){
+    html += `<table class="optable">
+      <tr><th>Signal</th><th>Phase</th><th>Current cycle</th><th>Δ Green</th></tr>`;
     p.operations.forEach(op=>{
       const verb = op.type==="extend_green" ? "+" : "−";
-      html += `<div class="oprow" style="cursor:pointer" title="Show on map"
+      const cyc = interCycle(op.intersection_id);
+      html += `<tr class="oplink" title="Show on map"
         onclick="focusIntersection('${op.intersection_id}')">
-        <span class="opdelta">${verb}${Math.round(op.delta_seconds)}s</span>
-        <span class="opname">📍 ${interName(op.intersection_id)}</span>
-        <span class="opphase">green · phase ${op.phase_id}</span>
-      </div>`;
+        <td>${esc(op.intersection_id)} · ${esc(interName(op.intersection_id))}</td>
+        <td class="num">P${esc(String(op.phase_id))}</td>
+        <td class="num">${cyc!==null?cyc+" s":"—"}</td>
+        <td class="delta">${verb}${Math.round(op.delta_seconds)} s</td>
+      </tr>`;
     });
+    html += `</table>`;
   } else {
-    html += `<div class="oprow"><span class="opname">No signal changes — monitoring recommended</span></div>`;
+    html += `<div style="padding:8px;font-size:12px">No signal changes — monitoring recommended.</div>`;
   }
-  // rationale tucked behind a toggle
-  html += `<details class="why"><summary>Why this recommendation</summary>
-    <div class="whytext">${esc(p.justification)}</div></details>`;
-  // compact outcome chips
+
+  // Dry-run outcome + provenance chips
   let chips = "";
   if(p.simulation){
     const s = p.simulation;
-    chips += `<span class="pchip good">dry-run: ${s.summary.intersections_improved}↑ improve</span>`;
+    chips += `<span class="pchip good">DRY-RUN ${s.summary.intersections_improved}↑ IMPROVED</span>`;
     if(s.summary.intersections_worsened>0)
-      chips += `<span class="pchip warn">${s.summary.intersections_worsened}↓ worsen</span>`;
-    chips += `<span class="pchip">clear ~${s.projected_clear_minutes} min</span>`;
+      chips += `<span class="pchip warn">${s.summary.intersections_worsened}↓ WORSENED</span>`;
+    chips += `<span class="pchip">CLEAR ~${s.projected_clear_minutes} MIN</span>`;
     if(s.transit_routes_affected.length)
-      chips += `<span class="pchip warn">${s.transit_routes_affected.length} transit routes</span>`;
+      chips += `<span class="pchip warn">${s.transit_routes_affected.length} TRANSIT ROUTES</span>`;
   }
-  chips += `<span class="pchip">${p.provenance.data_sources.length} data sources</span>
-            <span class="pchip">weather: ${p.provenance.weather?.condition||"?"}</span>`;
-  html += `<div class="planchips">${chips}</div>`;
-  if(p.status==="pending_approval"){
-    html += `<button class="primary" onclick="busy(this,()=>approve('${p.plan_id}'))">✓ Approve <span style="opacity:.55">Ctrl+Enter</span></button>
-             <button onclick="busy(this,()=>reject('${p.plan_id}'))">✕ Reject <span style="opacity:.55">Ctrl+Bksp</span></button>`;
+  chips += `<span class="pchip">${p.provenance.data_sources.length} DATA SOURCES</span>
+            <span class="pchip">WX ${esc((p.provenance.weather?.condition||"?").toUpperCase())}</span>`;
+  html += `<div class="govchips">${chips}</div>`;
+
+  // Rationale behind a toggle
+  html += `<div style="padding:0 8px 8px"><details class="why" data-dk="why-${p.plan_id}"><summary>Why this recommendation</summary>
+    <div class="whytext">${esc(p.justification)}</div></details></div>`;
+
+  // Cryptographic signature block — the exact content the operator signs.
+  html += `<div class="sig">
+    <div class="sighead">— Cryptographic signature —</div>
+    <div class="sigrow"><span class="k">PLAN</span><span class="v">${esc(p.plan_id)}</span></div>
+    ${p.plan_hash?`<div class="sigrow"><span class="k">SHA256</span><span class="v">${esc(p.plan_hash)}</span></div>`:""}
+    <div class="sigrow"><span class="k">MODEL</span><span class="v">${esc(p.model_version||"")}</span></div>
+  </div>`;
+
+  // State / actions
+  if(WLOCK === "plan:"+p.plan_id){
+    html += `<div class="wlock">WRITE-LOCK · COMMITTING TO HASH-CHAINED AUDIT TRAIL…</div>`;
+  } else if(p.status==="pending_approval"){
+    html += `<div class="govact">
+      <button class="approve" onclick="gApprove('${p.plan_id}')">✓ Approve &amp; Broadcast
+        <span class="kbd">CTRL+ENTER</span></button>
+      <button class="reject" onclick="gReject('${p.plan_id}')">✕ Reject &amp; Dismiss
+        <span class="kbd">CTRL+BKSP</span></button>
+    </div>`;
   } else if(p.status==="shadow_logged"){
-    html += `<div class="meta" style="color:var(--good)">✔ Approved — <b>SHADOW MODE: logged, not executed</b></div>`;
+    html += `<div class="govstate" style="color:var(--green-t)">✔ APPROVED — SHADOW MODE: LOGGED, NOT EXECUTED</div>`;
   } else if(p.status==="advisory_issued"){
-    html += `<div class="meta" style="color:var(--warn)">✔ Advisory instruction issued · expires in 15 min</div>
-             <button onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Field Instruction</button>`;
+    html += `<div class="govstate" style="color:var(--yellow)">✔ ADVISORY INSTRUCTION ISSUED · EXPIRES IN 15 MIN</div>
+      <div style="padding:0 8px 8px"><button style="margin:0" onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Field Instruction</button></div>`;
   } else if(p.status==="executed"){
-    html += `<div class="meta" style="color:var(--good)">✔ EXECUTED ${fmtAgo(p.executed_at)} — monitoring for worsening</div>
-             <button class="danger" onclick="busy(this,()=>rollback('${p.plan_id}'))">↩ Revert <span style="opacity:.55">Ctrl+Shift+R</span></button>`;
+    html += `<div class="govstate" style="color:var(--green-t)">✔ EXECUTED ${fmtAgo(p.executed_at)} — MONITORING FOR WORSENING</div>
+      <div style="padding:0 8px 8px"><button class="danger" style="margin:0" onclick="gRollback('${p.plan_id}')">↩ Revert <span style="opacity:.55;font-size:10px">CTRL+SHIFT+R</span></button></div>`;
   } else if(p.status==="reverted"){
-    html += `<div class="meta">↩ Reverted to previous timing plan</div>`;
+    html += `<div class="govstate">↩ REVERTED TO PREVIOUS TIMING PLAN</div>`;
   } else if(p.status==="expired"){
-    html += `<div class="meta" style="color:var(--warn)">⌛ Advisory instruction EXPIRED unconfirmed (15 min) — request a fresh recommendation</div>
-             <button onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Expired Instruction</button>`;
+    html += `<div class="govstate" style="color:var(--yellow)">⌛ ADVISORY EXPIRED UNCONFIRMED (15 MIN) — REQUEST A FRESH RECOMMENDATION</div>
+      <div style="padding:0 8px 8px"><button style="margin:0" onclick="busy(this,()=>showInstruction('${p.plan_id}'))">View Expired Instruction</button></div>`;
   }
   html += `</div>`;
   return html;
 }
 
+/* ---------- audit-writing actions (all pass through WRITE-LOCK) -------- */
 async function ack(id){ try{ await api("/api/incident/ack",{incident_id:id});
   toast("Incident acknowledged."); await refresh(); }catch(e){toast("Error: "+e.message);} }
 async function recommend(id){ try{ const p = await api("/api/recommend",{incident_id:id});
@@ -1683,6 +2115,15 @@ async function rollback(id){ try{ await api("/api/plan/rollback",{plan_id:id});
 async function resolveInc(id){ try{ await api("/api/incident/resolve",
   {incident_id:id,resolution:"Resolved",notes:"cleared from TOC"});
   toast("Incident resolved."); await refresh(); }catch(e){toast("Error: "+e.message);} }
+// Governance wrappers: replace the action row with a WRITE-LOCK banner
+// while the record is committed to the hash-chained audit trail.
+function gApprove(pid){ wlock("plan:"+pid, ()=>approve(pid)); }
+function gReject(pid){ wlock("plan:"+pid, ()=>reject(pid)); }
+function gRollback(pid){ wlock("plan:"+pid, ()=>rollback(pid)); }
+function gAck(iid){ wlock("inc:"+iid, ()=>ack(iid)); }
+window.gApprove=gApprove; window.gReject=gReject;
+window.gRollback=gRollback; window.gAck=gAck;
+
 async function showInstruction(id){
   try{ const ins = await api("/api/plan/instruction?id="+id);
     $("modaltitle").textContent =
@@ -1692,7 +2133,7 @@ async function showInstruction(id){
       ins.instructions.map(l=>`<div class="instr"><b>${l.intersection}</b><br>
         current: cycle ${l.current_timing.cycle_seconds}s, green ${l.current_timing.phase_green_seconds}s<br>
         <span class="chg">→ ${l.requested_change}</span></div>`).join("") +
-      `<div class="meta" style="margin-bottom:10px">${ins.confirmation_protocol}</div>`;
+      `<div class="meta" style="margin-bottom:8px">${ins.confirmation_protocol}</div>`;
     $("modal").style.display = "flex";
   }catch(e){toast("Error: "+e.message);} }
 window.ack=ack; window.recommend=recommend; window.approve=approve;
@@ -1764,14 +2205,14 @@ async function askCopilot(){
     document.getElementById("chatpending").removeAttribute("id");
   }catch(e){
     document.getElementById("chatpending").innerHTML =
-      `<span class="who">copilot</span><span style="color:var(--bad)">${esc(e.message)}</span>`;
+      `<span class="who">copilot</span><span style="color:var(--orange)">${esc(e.message)}</span>`;
     document.getElementById("chatpending").removeAttribute("id");
   }
   log.scrollTop = log.scrollHeight;
 }
 window.askCopilot = askCopilot;
 
-/* ---------- tabbed Safety | Analytics panel (Phase 3) ---------- */
+/* ---------- tabbed System Status | Analytics | Alerts panel ---------- */
 let panelTab = "safety";
 let analyticsData = null, analyticsLastFetch = 0;
 function setPanelTab(tab){
@@ -1805,12 +2246,12 @@ function renderRoadAlerts(){
   (highwayAlerts||[]).slice(0,20).forEach(a=>{
     const cls = (a.priority==="Highest"||a.priority==="High") ? "high" : "";
     html += `<div class="alert ${cls}"><b>🛣 WSDOT: ${esc(a.category)}</b>
-      · ${esc(a.road)}${a.updated_at?` · <span title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span>`:""}<br>${esc(a.headline)}</div>`;
+      · ${esc(a.road)}${a.updated_at?` · <span class="mono" title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span>`:""}<br>${esc(a.headline)}</div>`;
   });
   [...(wazeAlerts||[])].sort((a,b)=>b.reliability-a.reliability)
     .slice(0,20).forEach(w=>{
       html += `<div class="alert"><b>〰 Waze: ${esc(w.type)}${w.subtype?` · ${esc(w.subtype.replace(/_/g," ").toLowerCase())}`:""}</b>
-        · reliability ${w.reliability}/10<br>${esc(w.street||"")}${w.at?` · <span title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span>`:""}</div>`;
+        · reliability ${w.reliability}/10<br>${esc(w.street||"")}${w.at?` · <span class="mono" title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span>`:""}</div>`;
     });
   el.innerHTML = html;
 }
@@ -1832,7 +2273,8 @@ async function fetchAnalytics(){
 let travelTimes = [];
 
 function congBarColor(v){
-  return v>0.7 ? "var(--bad)" : v>0.45 ? "var(--warn)" : "var(--good)";
+  return v>0.7 ? "var(--orange)" : v>0.45 ? "var(--yellow)"
+    : "var(--green-t)";
 }
 
 function renderAnalytics(){
@@ -1845,22 +2287,22 @@ function renderAnalytics(){
     return;
   }
   let html = `<div class="meta" style="margin-bottom:2px">
-    Citywide congestion — last ${Math.round(a.window_hours)}h
-    · ${a.total_samples} samples</div>`;
+    Citywide congestion — last <span class="mono">${Math.round(a.window_hours)}h</span>
+    · <span class="mono">${a.total_samples}</span> samples</div>`;
   const hours = a.congestion_by_hour || [];
   if(hours.length){
     html += `<div class="hourbars">` + hours.map(h=>
       `<span class="hb" title="${h.hour} · avg ${(h.avg*100).toFixed(0)}% · max ${(h.max*100).toFixed(0)}% · ${h.samples} samples"
         style="height:${Math.max(6, h.avg*100)}%;background:${congBarColor(h.avg)}"></span>`
       ).join("") + `</div>
-      <div class="meta" style="display:flex;justify-content:space-between">
+      <div class="meta mono" style="display:flex;justify-content:space-between">
         <span>${hours[0].hour.slice(11)}</span>
-        <span>avg congestion by hour</span>
+        <span style="font-family:'Segoe UI',sans-serif">avg congestion by hour</span>
         <span>${hours[hours.length-1].hour.slice(11)}</span></div>`;
   }
   const hot = (a.hotspots||[]).slice(0,5);
   if(hot.length){
-    html += `<div class="meta" style="margin-top:7px;text-transform:uppercase;
+    html += `<div class="meta" style="margin-top:8px;text-transform:uppercase;
       letter-spacing:.5px">Top hotspots (click to locate)</div>`;
     hot.forEach(h=>{
       html += `<div class="hotrow" onclick="focusIntersection('${h.intersection_id}')"
@@ -1873,7 +2315,7 @@ function renderAnalytics(){
   }
   const po = a.plan_outcomes || {};
   const ic = a.incident_counts || {};
-  html += `<div class="planchips" style="margin-top:7px">
+  html += `<div class="govchips" style="margin-top:8px;padding:0">
     <span class="pchip good">✓ ${po.approved||0} approved</span>
     <span class="pchip">✕ ${po.rejected||0} rejected</span>
     <span class="pchip warn">⛔ ${po.blocked||0} blocked</span>
@@ -1884,15 +2326,15 @@ function renderAnalytics(){
   // WSDOT corridor travel times — current vs typical, slowest first.
   // Empty until WSDOT_ACCESS_CODE is configured server-side.
   if(travelTimes.length){
-    html += `<div class="meta" style="margin-top:7px;text-transform:uppercase;
+    html += `<div class="meta" style="margin-top:8px;text-transform:uppercase;
       letter-spacing:.5px">Corridor travel times · WSDOT live</div>`;
     travelTimes.slice(0,6).forEach(t=>{
       const ratio = t.ratio || 1;
-      const color = ratio>1.5 ? "var(--bad)" : ratio>1.15 ? "var(--warn)"
-        : "var(--good)";
+      const color = ratio>1.5 ? "var(--orange)" : ratio>1.15 ? "var(--yellow)"
+        : "var(--green-t)";
       html += `<div class="hotrow" title="${esc(t.name)} · ${t.distance_miles.toFixed(1)} mi · typical ${Math.round(t.average_minutes)} min">
         <b style="color:${color};min-width:52px">${Math.round(t.current_minutes)} min</b>
-        <span class="meta">${ratio>1?"+"+Math.round((ratio-1)*100)+"%":"typical"}</span>
+        <span class="meta mono">${ratio>1?"+"+Math.round((ratio-1)*100)+"%":"typical"}</span>
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🛣 ${esc(t.name)}</span>
       </div>`;
     });
@@ -1912,14 +2354,15 @@ function visionLine(){
   if(!v) return "";
   const state = !v.enabled ? "disabled"
     : v.running ? "running" : "starting";
-  const color = v.enabled && v.running ? "var(--good)" : "var(--dim)";
-  return `<div class="meta" style="margin-top:7px" title="Background AI vision sweep: Claude Haiku analyzes live camera frames every ${Math.round(v.interval_s||120)}s">
+  const color = v.enabled && v.running ? "var(--green-t)" : "var(--dim)";
+  return `<div class="meta" style="margin-top:8px" title="Background AI vision sweep analyzes live camera frames every ${Math.round(v.interval_s||120)}s">
     👁 AI vision sweep: <b style="color:${color}">${state}</b>
-    · ${v.frames_analyzed||0} frames · ${v.incidents_raised||0} detections
-    ${v.degraded?` · <span style="color:var(--warn)">degraded</span>`:""}</div>`;
+    · <span class="mono">${v.frames_analyzed||0}</span> frames · <span class="mono">${v.incidents_raised||0}</span> detections
+    ${v.degraded?` · <span style="color:var(--yellow)">degraded</span>`:""}</div>`;
 }
 function kpiColor(v, warnAt, badAt){
-  return v>=badAt ? "var(--bad)" : v>=warnAt ? "var(--warn)" : "var(--good)";
+  return v>=badAt ? "var(--orange)" : v>=warnAt ? "var(--yellow)"
+    : "var(--green-t)";
 }
 function renderSafety(){
   const m = status_?.safety_metrics; if(!m) return;
@@ -1933,7 +2376,7 @@ function renderSafety(){
       <div class="kpi"><b style="color:${kpiColor(m.constraint_block_rate_pct,0.5,1)}">${m.constraint_block_rate_pct}%</b><span>MUTCD blocks</span></div>
       <div class="kpi"><b style="color:${kpiColor(combined,1,2)}">${combined}%</b><span>combined &lt;2%</span></div>
       <div class="kpi"><b style="color:${kpiColor(activeN,4,5)}">${activeN}/5</b><span>live changes</span></div>
-      <div class="kpi"><b style="color:${status_.dlq_count>0?'var(--warn)':'var(--accent)'}">${status_.dlq_count}</b><span>DLQ</span></div>
+      <div class="kpi"><b style="color:${status_.dlq_count>0?'var(--yellow)':'var(--ink)'}">${status_.dlq_count}</b><span>DLQ</span></div>
     </div>
     <div class="row" style="margin-top:8px">
       <span class="meta">Mode${isAdmin?"":" (admin only)"}:</span>
@@ -1948,7 +2391,7 @@ function renderSafety(){
                value="${Math.round(status_.confidence_threshold)}"
                style="width:56px;padding:1px 4px;font-size:11px"
                onchange="setThreshold(this.value)" aria-label="Confidence threshold">%`
-          : `<b style="color:var(--accent)">${status_.confidence_threshold}%</b>`}
+          : `<b class="mono" style="color:var(--ink)">${status_.confidence_threshold}%</b>`}
       </span>
     </div>` + visionLine();
 }
@@ -1970,15 +2413,15 @@ function renderAlerts(){
   const alerts = (status_?.alerts||[]).slice().reverse().slice(0,12);
   let html = "";
   // NWS hazard alerts pinned at the top (911 events live in the queue;
-  // WSDOT/Waze road alerts live in the dedicated Road Alerts tab).
+  // WSDOT/Waze road alerts live in the dedicated Alerts tab).
   (hazards||[]).forEach(h=>{
     html += `<div class="alert critical"><b>⚠ NWS: ${esc(h.event)}</b>
       · ${esc(h.severity)}<br>${esc(h.headline)}</div>`;
   });
   html += alerts.map(a=>`<div class="alert ${a.priority}">
-        <b>${esc(a.kind.replace(/_/g," "))}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${esc(a.message)}</div>`).join("");
+        <b>${esc(a.kind.replace(/_/g," "))}</b> · <span class="mono" title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${esc(a.message)}</div>`).join("");
   $("alerts").innerHTML = html;
-  renderRoadAlerts();   // keep the Road Alerts tab + its count badge fresh
+  renderRoadAlerts();   // keep the Alerts tab + its count badge fresh
 }
 
 const AUDIT_ICON = {login:"→", login_failed:"⛔", logout:"←",
@@ -1994,13 +2437,13 @@ async function renderAudit(){
     const a = await api("/api/audit");
     auditEntries = a.entries || [];
     $("chainstate").innerHTML = a.chain_intact
-      ? `<span style="color:var(--good)">✓ chain intact · ${a.total}</span>`
-      : `<span style="color:var(--bad)">✕ CHAIN BROKEN</span>`;
+      ? `<span style="color:var(--green-t)">✓ chain intact · ${a.total}</span>`
+      : `<span style="color:var(--orange)">✕ CHAIN BROKEN</span>`;
     $("audit").innerHTML = a.entries.slice(-30).reverse().map(e=>
       `<div class="audit-entry">${AUDIT_ICON[e.action]||"·"} <b>${e.action.replace(/_/g," ")}</b>
        <span style="float:right" title="${fmtTime(e.timestamp)}">${fmtAgo(e.timestamp)}</span><br>
        <span style="opacity:.75">${e.actor}</span>
-       ${e.outcome!=="ok"?` · <b style="color:var(--bad)">${e.outcome}</b>`:""}</div>`).join("");
+       ${e.outcome!=="ok"?` · <b style="color:var(--orange)">${e.outcome}</b>`:""}</div>`).join("");
   }catch(e){/* panel-level failure tolerated */}
 }
 
@@ -2054,6 +2497,7 @@ async function refresh(){
     [status_, grid] = await Promise.all([api("/api/status"), api("/api/grid")]);
     renderHeader(); renderMap(); renderSafety();
     renderAlerts(); renderAudit(); renderFilterBar();
+    updateAlarm();           // critical channel: edge flash + 440 Hz pulse
     await loadIncidents();   // fetches the filtered queue, then renders it
     fetchEmergencies();   // 60s-throttled internally
 
@@ -2062,23 +2506,55 @@ async function refresh(){
   }catch(e){ /* transient */ }
 }
 
-/* Keyboard shortcuts per PRD §9.3 (no Ctrl+Z / Ctrl+A overloading) */
+/* ---------- keyboard acceleration (control-room affordances) ----------
+   J/K cursor · Enter open · Space map focus · Esc back ·
+   Ctrl+Enter approve · Ctrl+Backspace reject · Ctrl+Shift+R revert ·
+   Ctrl+Shift+K acknowledge. Keys are inert while typing in a field. */
 document.addEventListener("keydown", e=>{
-  if(!e.ctrlKey) return;
-  const firstPending = (status_?.plans||[]).find(p=>p.status==="pending_approval");
-  const firstExecuted = (status_?.plans||[]).find(p=>p.status==="executed");
-  const firstDetected = (status_?.incidents||[]).find(i=>i.state==="detected");
-  if(e.key==="Enter" && firstPending){ e.preventDefault(); approve(firstPending.plan_id); }
-  else if(e.key==="Backspace" && firstPending){ e.preventDefault(); reject(firstPending.plan_id); }
+  const ae = document.activeElement;
+  const typing = ae && (ae.tagName==="INPUT" || ae.tagName==="TEXTAREA"
+                        || ae.tagName==="SELECT");
+  if(!e.ctrlKey && !e.metaKey){
+    if(typing) return;
+    if(e.key==="Escape"){
+      if(mapFullscreen){ toggleFullscreen(); return; }
+      if(selKey){ backToTriage(); return; }
+      return;
+    }
+    if(ae && ae.tagName==="BUTTON") return;   // don't hijack button focus
+    if(e.key==="j" || e.key==="J"){ e.preventDefault(); moveCursor(1); }
+    else if(e.key==="k" || e.key==="K"){ e.preventDefault(); moveCursor(-1); }
+    else if(e.key==="Enter" && !selKey){ e.preventDefault(); openCursor(); }
+    else if(e.key===" "){ e.preventDefault(); focusCursorOnMap(); }
+    return;
+  }
+  // Ctrl-chords: prefer the SELECTED incident's plan, else first pending.
+  const plans = status_?.plans || [];
+  const selPending = selKey
+    ? plans.find(p=>p.incident_id===selKey && p.status==="pending_approval")
+    : null;
+  const firstPending = selPending || plans.find(p=>p.status==="pending_approval");
+  const selExecuted = selKey
+    ? plans.find(p=>p.incident_id===selKey && p.status==="executed")
+    : null;
+  const firstExecuted = selExecuted || plans.find(p=>p.status==="executed");
+  const selDetected = selKey
+    ? (status_?.incidents||[]).find(i=>i.id===selKey && i.state==="detected")
+    : null;
+  const firstDetected = selDetected
+    || (status_?.incidents||[]).find(i=>i.state==="detected");
+  if(e.key==="Enter" && firstPending){ e.preventDefault(); gApprove(firstPending.plan_id); }
+  else if(e.key==="Backspace" && firstPending){ e.preventDefault(); gReject(firstPending.plan_id); }
   else if(e.shiftKey && (e.key==="R"||e.key==="r") && firstExecuted){
-    e.preventDefault(); rollback(firstExecuted.plan_id); }
+    e.preventDefault(); gRollback(firstExecuted.plan_id); }
   else if(e.shiftKey && (e.key==="K"||e.key==="k") && firstDetected){
-    e.preventDefault(); ack(firstDetected.id); }
+    e.preventDefault(); gAck(firstDetected.id); }
 });
 
 initMap();
 renderUser();
 renderNotifToggle();
+renderAudioBtn();
 
 if(CF_ACCESS){
   // Cloudflare Access handled sign-in at the edge — no in-app login.
