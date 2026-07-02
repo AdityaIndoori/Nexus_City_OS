@@ -1489,9 +1489,12 @@ function renderIncidents(){
     html += `</div>`;
   });
 
-  // Sort direction + page size shared by every section below.
+  // Sort direction + page size shared by every section below. byTime is an
+  // explicit comparator — "newest first" (desc) means larger timestamps
+  // sort earlier. (A previous sign-factor version double-negated and
+  // inverted the order; keep this spelled out.)
   const _ord = ($("q_order") ? $("q_order").value : "desc");
-  const _dir = _ord === "asc" ? 1 : -1;
+  const byTime = (ta, tb) => _ord === "asc" ? (ta - tb) : (tb - ta);
   const _limit = queueLimit();
 
   // 911 events (Citizen-style) appear below platform incidents, compact,
@@ -1504,7 +1507,7 @@ function renderIncidents(){
     // calls still surface first; within each group, newest- or oldest-first
     // follows the dropdown.
     const sorted = [...emVisible].sort((a,b)=>
-      (b.traffic_impacting - a.traffic_impacting) || (_dir * (b.at - a.at)));
+      (b.traffic_impacting - a.traffic_impacting) || byTime(a.at, b.at));
 
     sorted.slice(0, _limit).forEach(e=>{
       const color = EM_COLORS[e.category] || EM_COLORS.other;
@@ -1526,7 +1529,7 @@ function renderIncidents(){
   if(roadVisible.length){
     html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
       letter-spacing:.5px">Road alerts · ${esc(emRangeLabel())} · WSDOT${wazeAlerts.length?"/Waze":""} live</div>`;
-    roadVisible.sort((x,y)=>_dir * (y.at - x.at)).slice(0, _limit).forEach(r=>{
+    roadVisible.sort((x,y)=>byTime(x.at, y.at)).slice(0, _limit).forEach(r=>{
       if(r.kind==="wsdot"){
         const a = r.a;
         const hi = (a.priority==="Highest"||a.priority==="High");
