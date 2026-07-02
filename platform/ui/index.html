@@ -29,12 +29,6 @@
   ::-webkit-scrollbar-track{background:transparent;}
   a{color:var(--blue);}
 
-  /* -------- viewport edge flash: unacknowledged critical channel --- */
-  #edgeflash{position:fixed; inset:0; pointer-events:none; z-index:3000;
-             border:4px solid var(--orange); opacity:0;}
-  #edgeflash.on{animation:edgepulse 1s steps(2, jump-none) infinite;}
-  @keyframes edgepulse{0%{opacity:0;} 50%{opacity:1;} 100%{opacity:0;}}
-
   /* -------- header -------------------------------------------------- */
   header{display:flex; align-items:center; gap:12px; height:48px;
          padding:0 16px; background:var(--panel);
@@ -492,7 +486,6 @@
 </style>
 </head>
 <body>
-<div id="edgeflash" aria-hidden="true"></div>
 <div id="loginoverlay" role="dialog" aria-label="Sign in">
   <div id="loginbox">
     <h2>NEXUS <span style="color:var(--orange)">CITY OS</span> — SIGN IN</h2>
@@ -956,8 +949,6 @@ function criticalUnacked(){
 }
 function updateAlarm(){
   const on = criticalUnacked();
-  const ef = $("edgeflash");
-  if(ef) ef.classList.toggle("on", on);
   if(on){
     if(!alarmTimer){ beep440(); alarmTimer = setInterval(beep440, 4000); }
   } else if(alarmTimer){
@@ -970,7 +961,7 @@ function toggleAudio(){
   renderAudioBtn();
   toast(audioOn
     ? "Audible alarm ON — 440 Hz pulse while a critical incident is unacknowledged."
-    : "Audible alarm muted (edge flash stays on).");
+    : "Audible alarm muted.");
   updateAlarm();
 }
 window.toggleAudio = toggleAudio;
@@ -2497,7 +2488,7 @@ async function refresh(){
     [status_, grid] = await Promise.all([api("/api/status"), api("/api/grid")]);
     renderHeader(); renderMap(); renderSafety();
     renderAlerts(); renderAudit(); renderFilterBar();
-    updateAlarm();           // critical channel: edge flash + 440 Hz pulse
+    updateAlarm();           // critical channel: 440 Hz pulse until acked
     await loadIncidents();   // fetches the filtered queue, then renders it
     fetchEmergencies();   // 60s-throttled internally
 
