@@ -113,6 +113,15 @@ def parse_travel_times(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+_TAG_RE = __import__("re").compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """WSDOT headline descriptions embed raw HTML (links, breaks) —
+    strip tags so the UI renders clean text."""
+    return _TAG_RE.sub("", text).replace("&nbsp;", " ").strip()
+
+
 def parse_highway_alerts(rows: List[Dict[str, Any]],
                          bbox: Optional[Tuple[float, float, float, float]]
                          = None) -> List[Dict[str, Any]]:
@@ -134,7 +143,8 @@ def parse_highway_alerts(rows: List[Dict[str, Any]],
             "id": str(r.get("AlertID", "")),
             "category": str(r.get("EventCategory", "")),
             "priority": str(r.get("Priority", "")),
-            "headline": str(r.get("HeadlineDescription", ""))[:300],
+            "headline": _strip_html(
+                str(r.get("HeadlineDescription", "")))[:300],
             "road": str(loc.get("RoadName", "")),
             "lat": lat, "lon": lon,
             "updated_at": _dotnet_date_to_epoch(r.get("LastUpdatedTime")),

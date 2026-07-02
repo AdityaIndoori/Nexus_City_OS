@@ -455,9 +455,11 @@
       <h2 style="display:flex;gap:10px;align-items:center">
         <span id="tab_safety" class="paneltab on" onclick="setPanelTab('safety')">AI Safety Metrics</span>
         <span id="tab_analytics" class="paneltab" onclick="setPanelTab('analytics')">Analytics</span>
+        <span id="tab_road" class="paneltab" onclick="setPanelTab('road')">Road Alerts <b id="roadcount" style="color:var(--warn)"></b></span>
       </h2>
       <div class="body" id="safety"></div>
       <div class="body" id="analytics" style="display:none"></div>
+      <div class="body" id="roadalerts" style="display:none"></div>
     </section>
     <section class="panel" aria-label="AI copilot and alerts">
       <h2>AI Copilot <span style="float:right;text-transform:none;letter-spacing:0;color:var(--dim)">Claude Haiku 4.5 · grounded</span></h2>
@@ -1727,11 +1729,42 @@ function setPanelTab(tab){
   panelTab = tab;
   $("tab_safety").classList.toggle("on", tab==="safety");
   $("tab_analytics").classList.toggle("on", tab==="analytics");
+  $("tab_road").classList.toggle("on", tab==="road");
   $("safety").style.display = tab==="safety" ? "" : "none";
   $("analytics").style.display = tab==="analytics" ? "" : "none";
+  $("roadalerts").style.display = tab==="road" ? "" : "none";
   if(tab==="analytics"){ analyticsLastFetch = 0; fetchAnalytics(); }
+  if(tab==="road") renderRoadAlerts();
 }
 window.setPanelTab = setPanelTab;
+
+// WSDOT highway alerts + Waze crowdsourced reports live in their own tab —
+// road/data-feed alerts must not clutter the AI Copilot chat panel.
+function renderRoadAlerts(){
+  const el = $("roadalerts");
+  const n = (highwayAlerts||[]).length + (wazeAlerts||[]).length;
+  const rc = $("roadcount");
+  if(rc) rc.textContent = n ? `(${n})` : "";
+  if(!el) return;
+  if(!n){
+    el.innerHTML = `<p class="meta">No road alerts right now.
+      WSDOT highway alerts appear here when WSDOT_ACCESS_CODE is configured;
+      Waze crowdsourced reports when the Waze for Cities feed is set.</p>`;
+    return;
+  }
+  let html = "";
+  (highwayAlerts||[]).slice(0,20).forEach(a=>{
+    const cls = (a.priority==="Highest"||a.priority==="High") ? "high" : "";
+    html += `<div class="alert ${cls}"><b>🛣 WSDOT: ${esc(a.category)}</b>
+      · ${esc(a.road)}${a.updated_at?` · <span title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span>`:""}<br>${esc(a.headline)}</div>`;
+  });
+  [...(wazeAlerts||[])].sort((a,b)=>b.reliability-a.reliability)
+    .slice(0,20).forEach(w=>{
+      html += `<div class="alert"><b>〰 Waze: ${esc(w.type)}${w.subtype?` · ${esc(w.subtype.replace(/_/g," ").toLowerCase())}`:""}</b>
+        · reliability ${w.reliability}/10<br>${esc(w.street||"")}${w.at?` · <span title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span>`:""}</div>`;
+    });
+  el.innerHTML = html;
+}
 
 async function fetchAnalytics(){
   if(Date.now() - analyticsLastFetch < 60000) return;   // 60s cadence
@@ -1887,29 +1920,16 @@ window.setMode=setMode;
 function renderAlerts(){
   const alerts = (status_?.alerts||[]).slice().reverse().slice(0,12);
   let html = "";
-  // NWS hazard alerts pinned at the top (911 events live in the queue).
+  // NWS hazard alerts pinned at the top (911 events live in the queue;
+  // WSDOT/Waze road alerts live in the dedicated Road Alerts tab).
   (hazards||[]).forEach(h=>{
     html += `<div class="alert critical"><b>⚠ NWS: ${esc(h.event)}</b>
       · ${esc(h.severity)}<br>${esc(h.headline)}</div>`;
   });
-  // WSDOT highway alerts (collisions/closures/construction) — highest
-  // priority first; empty until WSDOT_ACCESS_CODE is configured.
-  (highwayAlerts||[]).slice(0,6).forEach(a=>{
-    const cls = (a.priority==="Highest"||a.priority==="High")
-      ? "high" : "";
-    html += `<div class="alert ${cls}"><b>🛣 WSDOT: ${esc(a.category)}</b>
-      · ${esc(a.road)}${a.updated_at?` · <span title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span>`:""}<br>${esc(a.headline)}</div>`;
-  });
-  // Waze crowdsourced reports (accidents/hazards), most reliable first —
-  // empty until the Waze for Cities feed is configured.
-  [...(wazeAlerts||[])].sort((a,b)=>b.reliability-a.reliability)
-    .slice(0,6).forEach(w=>{
-      html += `<div class="alert"><b>〰 Waze: ${esc(w.type)}${w.subtype?` · ${esc(w.subtype.replace(/_/g," ").toLowerCase())}`:""}</b>
-        · reliability ${w.reliability}/10<br>${esc(w.street||"")}${w.at?` · <span title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span>`:""}</div>`;
-    });
   html += alerts.map(a=>`<div class="alert ${a.priority}">
         <b>${esc(a.kind.replace(/_/g," "))}</b> · <span title="${fmtTime(a.at)}">${fmtAgo(a.at)}</span><br>${esc(a.message)}</div>`).join("");
   $("alerts").innerHTML = html;
+  renderRoadAlerts();   // keep the Road Alerts tab + its count badge fresh
 }
 
 const AUDIT_ICON = {login:"→", login_failed:"⛔", logout:"←",
