@@ -195,6 +195,9 @@ class Incident:
     # (the Claude Haiku assessment) and a deterministic explanation otherwise.
     ai_justification: str = ""
     ai_confidence: Optional[float] = None        # 0..100, model self-assessment
+    # Free-form operator notes (auto-saved from the incident workspace,
+    # persisted, audit-logged on change). Shift-handover context lives here.
+    operator_notes: str = ""
     # The actual camera frame AT DETECTION TIME (jpeg bytes), frozen so the
     # operator always sees what the detector saw — never the latest live image.
     # Kept in memory only; never serialized into JSON status payloads.

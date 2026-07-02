@@ -673,6 +673,90 @@ def make_handler(runtime: PlatformRuntime):
                         since=since, until=until, types=types,
                         sources=sources, include_resolved=not active_only,
                         order=order, limit=limit, offset=offset))
+                elif route == "/api/incident/report":
+                    # Per-incident evidence report (JSON download): the full
+                    # incident record + its complete action history + every
+                    # related hash-chained audit entry. For handoff to
+                    # partner agencies / legal discovery.
+                    params = parse_qs(parsed.query)
+                    inc_id = params.get("id", [""])[0]
+                    inc = engine.graph.incidents.get(inc_id)
+                    if inc is None:
+                        self._send_json(
+                            {"error": f"Unknown incident {inc_id}"}, 404)
+                        return
+                    record = engine._incident_dict(inc)
+                    record["action_history"] = list(inc.action_history)
+                    related = [
+                        e for e in engine.audit.entries(limit=1000)
+                        if (e.get("after_state") or {}).get(
+                            "incident_id") == inc.id
+                        or (inc.intersection_id in (e.get("targets") or [])
+                            and e.get("timestamp", 0)
+                            >= inc.detected_at - 1)]
+                    engine.audit.record(
+                        actor=principal["sub"], action="incident_exported",
+                        targets=[inc.intersection_id],
+                        detail=f"incident report {inc.id} exported")
+                    payload = json.dumps({
+                        "generated_at": now_ts(),
+                        "generated_by": principal["sub"],
+                        "incident": record,
+                        "audit_entries": related,
+                        "audit_chain_intact":
+                            engine.audit.verify_chain_cached(),
+                    }, indent=2, default=str).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type",
+                                     "application/json; charset=utf-8")
+                    self.send_header(
+                        "Content-Disposition",
+                        f'attachment; filename="{inc.id}-report.json"')
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "no-store")
+                    self._emit_security_headers()
+                    self.end_headers()
+                    self.wfile.write(payload)
+                elif route == "/api/handover":
+                    # Shift-handover report: everything the incoming operator
+                    # needs — open incidents (with notes), pending plans, and
+                    # governance actions in the window. Default 8h window.
+                    params = parse_qs(parsed.query)
+                    hrs = float(params.get("hours", ["8"])[0])
+                    hrs = max(0.5, min(72.0, hrs))
+                    since_ts = now_ts() - hrs * 3600.0
+                    open_inc = [engine._incident_dict(i)
+                                for i in engine.active_incidents()]
+                    with engine._lock:
+                        pending = [p.to_dict() for p in
+                                   engine.plans.values()
+                                   if p.status.value == "pending_approval"]
+                        executed = [p.to_dict() for p in
+                                    engine.plans.values()
+                                    if p.status.value == "executed"]
+                    resolved = engine.query_incidents(
+                        since=since_ts, order="desc", limit=50)
+                    resolved_rows = [
+                        i for i in resolved["incidents"]
+                        if i["state"] in ("resolved", "closed")]
+                    audit_window = [
+                        e for e in engine.audit.entries(limit=500)
+                        if e.get("timestamp", 0) >= since_ts
+                        and e.get("action") not in ("tick",)]
+                    self._send_json({
+                        "generated_at": now_ts(),
+                        "generated_by": principal["sub"],
+                        "window_hours": hrs,
+                        "mode": engine.mode.value,
+                        "open_incidents": open_inc,
+                        "pending_plans": pending,
+                        "executed_changes": executed,
+                        "resolved_in_window": resolved_rows,
+                        "audit_actions_in_window": len(audit_window),
+                        "audit_recent": audit_window[-40:],
+                        "audit_chain_intact":
+                            engine.audit.verify_chain_cached(),
+                    })
                 elif route == "/api/incident/frame":
                     # Serve the FROZEN detection-time camera frame for an
                     # incident (never the latest live image). 404 when the
@@ -813,6 +897,26 @@ def make_handler(runtime: PlatformRuntime):
                         user_id, str(body.get("incident_id", "")))
                     self._send_json({"incident_id": inc.id,
                                      "state": inc.state.value})
+                elif route == "/api/incident/notes":
+                    # Auto-saved operator notes (debounced from the UI).
+                    inc = engine.update_incident_notes(
+                        user_id,
+                        str(body.get("incident_id", "")),
+                        str(body.get("notes", "")))
+                    self._send_json({"incident_id": inc.id,
+                                     "notes_len": len(inc.operator_notes),
+                                     "saved_at": now_ts()})
+                elif route == "/api/incident/contact":
+                    # Field-operator dispatch contact (fire/police/ems/
+                    # traffic crew) — audit-logged governance record.
+                    inc = engine.record_field_contact(
+                        user_id,
+                        str(body.get("incident_id", "")),
+                        str(body.get("service", "")),
+                        str(body.get("note", "")))
+                    self._send_json({"incident_id": inc.id,
+                                     "logged_at": now_ts(),
+                                     "service": str(body.get("service", ""))})
                 elif route == "/api/incident/resolve":
                     inc = engine.resolve_incident(
                         user_id,

@@ -104,6 +104,23 @@
   #fsbtn{position:absolute; right:8px; top:84px; z-index:1000;
          width:32px; height:32px; padding:0; font-size:14px;}
   #mappanel.fullscreen{position:fixed; inset:0; z-index:1400;}
+  /* -------- map place search ----------------------------------------- */
+  #mapsearch{position:absolute; left:52px; top:44px; z-index:1001;
+             width:min(340px,62%);}
+  #mapsearch input{width:100%; padding:6px 8px; font-size:12px;
+    background:rgba(25,28,32,.96); border:1px solid #3A4048;
+    color:var(--ink); font-family:"Segoe UI",sans-serif;}
+  #mapsearch input:focus{outline:none; border-color:var(--yellow);}
+  #msresults{background:var(--panel); border:1px solid #4A515A;
+             border-top:none; max-height:240px; overflow-y:auto;
+             display:none;}
+  #msresults .msrow{padding:6px 8px; font-size:12px; cursor:pointer;
+    border-bottom:1px solid var(--line); display:flex; gap:8px;
+    align-items:center;}
+  #msresults .msrow:hover,#msresults .msrow.sel{background:var(--panel2);}
+  #msresults .msrow .k{color:var(--dim); font-size:9px;
+    text-transform:uppercase; margin-left:auto; font-family:var(--mono);
+    white-space:nowrap; flex:0 0 auto;}
 
   /* -------- buttons: physical, blocky ------------------------------- */
   button{background:var(--panel2); color:var(--ink);
@@ -122,6 +139,11 @@
     height:8px; margin-right:8px; vertical-align:0;
     border:2px solid var(--yellow); border-top-color:transparent;
     border-radius:50%; animation:spin .7s linear infinite;}
+  /* deterministic inline loading spinner (analytics, camera frames…) */
+  .spin{display:inline-block; width:12px; height:12px; margin-right:8px;
+    border:2px solid var(--yellow); border-top-color:transparent;
+    border-radius:50%; animation:spin .7s linear infinite;
+    vertical-align:-2px; flex:0 0 auto;}
 
   select,input{background:var(--panel2); color:var(--ink);
                border:1px solid var(--line); padding:4px 8px; font-size:12px;
@@ -191,12 +213,21 @@
   .tierhead.th2{color:var(--yellow);}
   .tierhead.th2::before{content:""; width:12px; height:12px;
     background:var(--yellow); display:inline-block;}
+  .tierhead.th3{color:var(--green-t);}
+  .tierhead.th3::before{content:""; width:12px; height:12px;
+    background:var(--green); display:inline-block;}
+  /* collapsible tier sections (click header to fold/unfold) */
+  .tierhead{cursor:pointer; user-select:none;}
+  .tierhead:hover{filter:brightness(1.25);}
+  .tierhead .tarr{font-family:var(--mono); font-size:10px;
+                  flex:0 0 10px;}
   .trow{display:flex; gap:8px; align-items:flex-start; cursor:pointer;
         background:var(--panel2); border:1px solid var(--line);
         border-left:4px solid var(--line); padding:8px; margin:0 0 4px;}
   .trow:hover{border-color:#4A515A;}
   .trow.t1{border-left-color:var(--orange);}
   .trow.t2{border-left-color:var(--yellow);}
+  .trow.t3{border-left-color:var(--green); opacity:.8;}
   .trow.cur{outline:2px solid var(--yellow); outline-offset:-2px;}
   .tsev{flex:0 0 44px; text-align:center; font-family:var(--mono);
         font-size:18px; font-weight:700; line-height:1.1;
@@ -309,6 +340,24 @@
   .wlock::before{content:""; width:12px; height:12px;
     border:2px solid var(--yellow); border-top-color:transparent;
     border-radius:50%; animation:spin .8s linear infinite; flex:0 0 auto;}
+  /* operator notes (auto-saved) */
+  .notesblock{margin-top:8px; border:1px solid var(--line);
+              background:var(--panel2);}
+  .notesblock .nhead{display:flex; align-items:center; gap:8px;
+    padding:4px 8px; font-size:9px; text-transform:uppercase;
+    letter-spacing:.5px; color:var(--dim); font-weight:700;
+    border-bottom:1px solid var(--line);}
+  .notesblock .nstate{margin-left:auto; text-transform:none;
+    letter-spacing:0; font-weight:400; color:var(--green-t);}
+  .notesblock textarea{width:100%; min-height:64px; display:block;
+    background:var(--panel2); color:var(--ink); border:none; padding:8px;
+    font:12px/1.5 "Segoe UI",sans-serif; resize:vertical; outline:none;}
+  .notesblock textarea:focus{background:#23272E;}
+  /* contact-field-operator modal grid */
+  .contactgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px;
+               margin:8px 0;}
+  .contactgrid button{margin:0; min-height:48px; font-weight:700;
+                      font-size:12px;}
 
   /* -------- AI justification / rationale expanders ------------------ */
   details.aiwhy{margin:8px 0; border:1px solid var(--line);
@@ -455,15 +504,22 @@
     #bottompanels .body{max-height:40vh;}
     .popimg{width:auto; max-width:78vw;}
   }
-  /* FIELD ACTION MODE — managers on the move. Map, feeds and secondary
-     panels leave the flow; the rail becomes a full-viewport, high-density
-     text-and-button Approval/Rejection Action Queue. */
+  /* FIELD ACTION MODE — managers on the move. The rail leads with a
+     full-height, high-density Action Queue; the map and secondary panels
+     STAY IN FLOW below at reduced heights (nothing is hidden — scroll). */
   @media (max-width: 640px){
-    #mappanel{display:none;}
-    #bottompanels{display:none;}
-    #sidepanel{min-height:calc(100vh - 120px);}
+    main{display:flex; flex-direction:column;}
+    #sidepanel{order:1; min-height:60vh;}
+    #mappanel{order:2; height:40vh; min-height:220px;}
+    #map{min-height:180px;}
+    #bottompanels{order:3;}
+    #bottompanels .panel{min-height:140px;}
+    #bottompanels .body{max-height:36vh;}
     #sidepanel .body{max-height:none;}
     .rowact{display:flex;}
+    .legend{gap:8px; font-size:10px;}
+    #coverageline{display:none;}
+    #mapsearch{width:calc(100% - 96px);}
     .trow{padding:8px;}
     header h1{font-size:14px;}
     .modebadge,.databadge{font-size:10px; padding:2px 8px;}
@@ -533,6 +589,11 @@
   <section class="panel" id="mappanel" aria-label="Live Grid map">
     <h2>Live Grid — Seattle <span id="weatherline" class="mono" style="float:right;text-transform:none;letter-spacing:0"></span></h2>
     <div id="map" role="application" aria-label="Seattle live traffic map"></div>
+    <div id="mapsearch">
+      <input id="msinput" placeholder="⌕ Search intersections, cameras, 911 addresses, places…"
+             autocomplete="off" aria-label="Search the map">
+      <div id="msresults" role="listbox"></div>
+    </div>
     <button id="locatebtn" onclick="locateMe()" title="Center on my location" aria-label="My location">⌖</button>
     <button id="fsbtn" onclick="toggleFullscreen()" title="Fullscreen map (Esc to exit)" aria-label="Fullscreen map">⛶</button>
     <div class="legend">
@@ -585,6 +646,11 @@
           <option value="50">50</option>
           <option value="100">100</option>
         </select>
+      </label>
+      <label title="Show resolved / closed incidents in a separate CLOSED tier">
+        <input type="checkbox" id="q_closed" onchange="onQueueControlsChange()"
+               style="width:12px;height:12px;accent-color:var(--yellow);padding:0"
+               aria-label="Include closed incidents"> Closed
       </label>
       <span class="qcount" id="q_count"></span>
     </div>
@@ -1269,7 +1335,7 @@ function popupHtml(inter){
     const box = "camb_"+liveCam.id;
     html += `<div id="${box}">
       <img class="popimg" alt="Live camera: ${esc(liveCam.live_name||inter.name)}">
-      <span class="caminfo" style="color:#98A1AB;font-size:11px">LIVE ${esc((liveCam.live_type||'sdot').toUpperCase())} camera · ${esc(liveCam.live_name||"")}<br>loading frame…</span><br>
+      <span class="caminfo" style="color:#98A1AB;font-size:11px">LIVE ${esc((liveCam.live_type||'sdot').toUpperCase())} camera · ${esc(liveCam.live_name||"")}<br><span class="spin"></span>loading frame…</span><br>
       <button onclick="busy(this,()=>loadCamFrame('${liveCam.id}','${box}',true))">⟳ Refresh feed</button>
       <button onclick="busy(this,()=>aiAnalyze('${inter.id}','${box}'))">🤖 AI vision analysis</button>
       <div class="aiout" style="font-size:11px;color:#98A1AB;margin-top:4px"></div>
@@ -1305,7 +1371,8 @@ async function loadCamFrame(camId, boxId, force){
   const img = box.querySelector("img");
   const info = box.querySelector(".caminfo");
   const baseLabel = info.innerHTML.split("<br>")[0];
-  info.innerHTML = baseLabel + "<br>" + (force ? "refreshing from source…" : "loading frame…");
+  info.innerHTML = baseLabel + "<br><span class='spin'></span>" +
+    (force ? "refreshing from source…" : "loading frame…");
   try{
     const r = await fetch(`/api/camera?id=${camId}${force?"&refresh=1":""}`,
       {headers:{"Authorization":"Bearer "+TOKEN}});
@@ -1596,6 +1663,9 @@ async function loadIncidents(){
   } else if(range !== "0"){
     params.set("window", range);
   }
+  // "Closed" toggle: unchecked → server hides resolved/closed (active=1);
+  // checked → resolved incidents come back and render in the CLOSED tier.
+  if(!($("q_closed") && $("q_closed").checked)) params.set("active", "1");
   // Sequence guard: a dropdown change races with the SSE refresh + 15s
   // poll, all calling loadIncidents(). Without this, a slower earlier
   // request can resolve AFTER the user's newer one and overwrite it with
@@ -1673,6 +1743,8 @@ function incidentRowHtml(inc, plans, tier){
   const pending = latest && latest.status==="pending_approval";
   const tags = [
     inc.state==="detected" ? `<span class="tag orange">ACK REQ</span>`
+      : ["resolved","closed"].includes(inc.state)
+        ? `<span class="tag green">${esc(inc.state)}${inc.resolution?" · "+esc(inc.resolution):""}</span>`
       : `<span class="tag">${esc(inc.state)}</span>`,
     pending ? `<span class="tag yellow">PLAN PENDING</span>` : "",
     inc.detection_source==="ai_vision" ? `<span class="tag">AI VISION</span>`
@@ -1791,12 +1863,19 @@ function renderTriage(){
   const _limit = queueLimit();
 
   // ---- Tier assignment (deduplicated: each event in exactly one tier) --
-  const critInc = [], monInc = [];
+  // Resolved/closed incidents (present only when "Closed" is checked)
+  // render in their own CLOSED tier below the active work.
+  const critInc = [], monInc = [], closedInc = [];
   incidents.forEach(inc=>{
-    (isCriticalIncident(inc, plans) ? critInc : monInc).push(inc);
+    if(["resolved","closed"].includes(inc.state)) closedInc.push(inc);
+    else (isCriticalIncident(inc, plans) ? critInc : monInc).push(inc);
   });
-  // Severity-ranked inside the critical tier, then operator sort.
-  critInc.sort((a,b)=>(b.severity - a.severity) || byTime(a.detected_at, b.detected_at));
+  // BUG FIX: the operator's sort order is PRIMARY in every tier —
+  // "oldest first" must reorder Critical Action too (severity is already
+  // encoded in the tiering + the SEV figure on each row).
+  critInc.sort((a,b)=>byTime(a.detected_at, b.detected_at));
+  closedInc.sort((a,b)=>byTime(a.resolved_at||a.detected_at,
+                               b.resolved_at||b.detected_at));
   const critEm = [], monEm = [];
   emVisible.forEach(e=>{ (e.traffic_impacting ? critEm : monEm).push(e); });
   critEm.sort((a,b)=>byTime(a.at, b.at));
@@ -1806,33 +1885,53 @@ function renderTriage(){
   const rows = [];        // rebuilt cursor model, matching DOM order
   let html = "";
 
+  // Collapsible tier header: click folds/unfolds; counts stay visible.
+  const tierHead = (key, cls, label, n) =>
+    `<div class="tierhead ${cls}" onclick="toggleTier('${key}')"
+       title="Click to ${tierCollapsed[key]?"expand":"collapse"} this section">
+       ${label} <span class="tarr">${tierCollapsed[key]?"▸":"▾"}</span>
+       <span class="tn">${n}</span></div>`;
+
   const nCrit = critInc.length + critEm.length;
   if(nCrit){
-    html += `<div class="tierhead th1">Critical Action <span class="tn">${nCrit}</span></div>`;
-    critInc.forEach(inc=>{
-      html += incidentRowHtml(inc, plans, 1);
-      rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
-    });
-    critEm.slice(0, _limit).forEach(e=>{
-      html += emRowHtml(e, 1);
-      rows.push({kind:"em", id:e.id});
-    });
+    html += tierHead("crit", "th1", "Critical Action", nCrit);
+    if(!tierCollapsed.crit){
+      critInc.forEach(inc=>{
+        html += incidentRowHtml(inc, plans, 1);
+        rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
+      });
+      critEm.slice(0, _limit).forEach(e=>{
+        html += emRowHtml(e, 1);
+        rows.push({kind:"em", id:e.id});
+      });
+    }
   }
   const nMon = monInc.length + monEm.length + roadVisible.length;
   if(nMon){
-    html += `<div class="tierhead th2">Monitored Anomalies <span class="tn">${nMon}</span></div>`;
-    monInc.forEach(inc=>{
-      html += incidentRowHtml(inc, plans, 2);
-      rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
-    });
-    monEm.slice(0, _limit).forEach(e=>{
-      html += emRowHtml(e, 2);
-      rows.push({kind:"em", id:e.id});
-    });
-    roadVisible.slice(0, _limit).forEach(r=>{
-      html += roadRowHtml(r);
-      rows.push({kind:"road", id:null});
-    });
+    html += tierHead("mon", "th2", "Monitored Anomalies", nMon);
+    if(!tierCollapsed.mon){
+      monInc.forEach(inc=>{
+        html += incidentRowHtml(inc, plans, 2);
+        rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
+      });
+      monEm.slice(0, _limit).forEach(e=>{
+        html += emRowHtml(e, 2);
+        rows.push({kind:"em", id:e.id});
+      });
+      roadVisible.slice(0, _limit).forEach(r=>{
+        html += roadRowHtml(r);
+        rows.push({kind:"road", id:null});
+      });
+    }
+  }
+  if(closedInc.length){
+    html += tierHead("closed", "th3", "Closed / Resolved", closedInc.length);
+    if(!tierCollapsed.closed){
+      closedInc.slice(0, _limit).forEach(inc=>{
+        html += incidentRowHtml(inc, plans, 3);
+        rows.push({kind:"inc", id:inc.id, iid:inc.intersection_id});
+      });
+    }
   }
 
   triageRows = rows;
@@ -1841,6 +1940,16 @@ function renderTriage(){
   paintCursor(false);
   _openDK.forEach(k=>{ const el = wrap.querySelector('details[data-dk="'+k+'"]'); if(el) el.open = true; });
 }
+
+/* ---------- collapsible tier sections (state persists per station) ------ */
+const tierCollapsed = JSON.parse(
+  localStorage.getItem("nexus_tiers") || "{}");
+function toggleTier(key){
+  tierCollapsed[key] = !tierCollapsed[key];
+  localStorage.setItem("nexus_tiers", JSON.stringify(tierCollapsed));
+  renderIncidents();
+}
+window.toggleTier = toggleTier;
 
 /* ---------- J/K cursor ---------- */
 function paintCursor(scroll){
@@ -1910,6 +2019,12 @@ function renderWorkspace(inc){
       <span>📍 ${esc(name)}</span>
       <button class="locfocus" style="margin:0"
         onclick="focusIntersection('${inc.intersection_id}')">FOCUS MAP <span style="opacity:.55">SPACE</span></button>
+    </div>
+    <div class="row" style="gap:8px">
+      <button style="margin:0;flex:1" onclick="openContactModal('${inc.id}')"
+        title="Notify a field response service — every contact is committed to the hash-chained audit trail">📞 CONTACT FIELD OPS</button>
+      <button style="margin:0;flex:1" onclick="busy(this,()=>exportIncidentReport('${inc.id}'))"
+        title="Download the full incident record + related audit entries as JSON (agency handoff / discovery)">⬇ EXPORT REPORT</button>
     </div>`;
 
   // W4 camera evidence: FROZEN detection-time frame (what the detector saw)
@@ -1924,6 +2039,9 @@ function renderWorkspace(inc){
       </div>
       <div id="aiv_${inc.id}" class="meta">${visionCache[inc.id]||""}</div>`;
   }
+
+  // W4b cross-feed correlation: 911 dispatches near this incident
+  html += nearbyEventsHtml(inc);
 
   // W5 AI classification rationale
   html += aiJustificationHtml(inc);
@@ -1947,11 +2065,163 @@ function renderWorkspace(inc){
       onclick="wlock('inc:${inc.id}', ()=>resolveInc('${inc.id}'))">CLOSE INCIDENT</button>`;
   }
 
+  // W6b operator notes (debounced auto-save with a mono status indicator)
+  html += notesBlockHtml(inc);
+
   // W7 hash-chained timeline
   html += incidentTimeline(inc);
 
+  // Preserve the notes draft + caret across SSE-driven re-renders.
+  const oldTa = wrap.querySelector(".notesblock textarea");
+  const hadFocus = oldTa && document.activeElement === oldTa;
+  const selS = hadFocus ? oldTa.selectionStart : 0;
+  const selE = hadFocus ? oldTa.selectionEnd : 0;
   wrap.innerHTML = html;
+  const newTa = wrap.querySelector(".notesblock textarea");
+  if(newTa && notesDraft[inc.id] !== undefined)
+    newTa.value = notesDraft[inc.id];
+  if(newTa && hadFocus){
+    newTa.focus();
+    try{ newTa.setSelectionRange(selS, selE); }catch(e){}
+  }
   _openDK.forEach(k=>{ const el = wrap.querySelector('details[data-dk="'+k+'"]'); if(el) el.open = true; });
+}
+
+/* ---------- operator notes: debounced auto-save ------------------------ */
+const notesDraft = {};        // incident_id -> unsaved draft text
+const notesSavedAt = {};      // incident_id -> epoch of last successful save
+let notesTimer = null;
+function notesBlockHtml(inc){
+  const state = notesDraft[inc.id] !== undefined
+      && notesDraft[inc.id] !== (inc.operator_notes||"")
+    ? `<span class="nstate" style="color:var(--yellow)">unsaved…</span>`
+    : notesSavedAt[inc.id]
+    ? `<span class="nstate mono">✓ saved ${fmtTime(notesSavedAt[inc.id])}</span>`
+    : `<span class="nstate mono" style="color:var(--dim)">auto-saves</span>`;
+  return `<div class="notesblock">
+    <div class="nhead">Operator Notes <span id="nstate_${inc.id}">${state}</span></div>
+    <textarea placeholder="Shift-handover context, field observations, decisions… (auto-saved, audit-logged)"
+      oninput="onNotesInput('${inc.id}', this.value)"
+      aria-label="Operator notes">${esc(inc.operator_notes||"")}</textarea>
+  </div>`;
+}
+function onNotesInput(incId, value){
+  notesDraft[incId] = value;
+  const st = $("nstate_"+incId);
+  if(st) st.innerHTML = `<span class="nstate" style="color:var(--yellow)">saving…</span>`;
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(()=>saveNotes(incId), 900);   // debounce 0.9s
+}
+window.onNotesInput = onNotesInput;
+async function saveNotes(incId){
+  const text = notesDraft[incId];
+  if(text === undefined) return;
+  try{
+    const r = await api("/api/incident/notes",
+                        {incident_id: incId, notes: text});
+    notesSavedAt[incId] = r.saved_at || (Date.now()/1000);
+    // Sync the local incident copy so the draft can be retired.
+    const inc = findIncident(incId);
+    if(inc) inc.operator_notes = text;
+    delete notesDraft[incId];
+    const st = $("nstate_"+incId);
+    if(st) st.innerHTML =
+      `<span class="nstate mono">✓ saved ${fmtTime(notesSavedAt[incId])}</span>`;
+  }catch(e){
+    const st = $("nstate_"+incId);
+    if(st) st.innerHTML =
+      `<span class="nstate" style="color:var(--orange)">save failed — retrying</span>`;
+    clearTimeout(notesTimer);
+    notesTimer = setTimeout(()=>saveNotes(incId), 4000);
+  }
+}
+
+/* ---------- contact field operators (audit-logged dispatch record) ----- */
+const CONTACT_SERVICES = [
+  {key:"fire",         label:"🚒 FIRE (SFD)",        color:"var(--orange)"},
+  {key:"police",       label:"🚓 POLICE (SPD)",      color:"var(--blue)"},
+  {key:"ems",          label:"🚑 EMS / AMR",         color:"var(--yellow)"},
+  {key:"traffic_crew", label:"🚧 SDOT TRAFFIC CREW", color:"var(--green-t)"},
+];
+function openContactModal(incId){
+  const inc = findIncident(incId);
+  const loc = inc ? (inc.camera_name || inc.intersection_name
+                     || inc.intersection_id) : incId;
+  $("modaltitle").textContent = "Contact Field Operator · " + incId;
+  $("modalcontent").innerHTML = `
+    <div class="meta" style="margin-bottom:4px">📍 ${esc(loc)}</div>
+    <div class="meta">Select the responding service. The contact is committed
+      to the incident action history and the hash-chained audit trail.</div>
+    <div class="contactgrid">
+      ${CONTACT_SERVICES.map(s=>
+        `<button style="border-color:${s.color}"
+           onclick="busy(this,()=>sendFieldContact('${incId}','${s.key}'))">${s.label}</button>`).join("")}
+    </div>
+    <input id="contactnote" placeholder="Optional note for the dispatch record…"
+      style="width:100%;font-family:'Segoe UI',sans-serif"
+      aria-label="Contact note">
+    <div id="contactlog" class="meta mono" style="margin-top:8px;min-height:16px"></div>`;
+  $("modal").style.display = "flex";
+}
+window.openContactModal = openContactModal;
+async function sendFieldContact(incId, service){
+  try{
+    const note = ($("contactnote") && $("contactnote").value.trim()) || "";
+    await api("/api/incident/contact",
+              {incident_id: incId, service, note});
+    const lg = $("contactlog");
+    if(lg) lg.innerHTML +=
+      `<div style="color:var(--green-t)">✓ ${esc(service.replace(/_/g," ").toUpperCase())} notified · ${fmtTime(Date.now()/1000)} · audit-logged</div>`;
+    toast(`Field contact logged: ${service.replace(/_/g," ")} — committed to audit trail.`);
+    refresh();
+  }catch(e){ toast("Contact failed: "+e.message); }
+}
+window.sendFieldContact = sendFieldContact;
+
+/* ---------- per-incident JSON evidence report -------------------------- */
+async function exportIncidentReport(incId){
+  try{
+    const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
+    const r = await fetch("/api/incident/report?id="
+                          + encodeURIComponent(incId), {headers});
+    if(!r.ok){
+      const d = await r.json().catch(()=>({}));
+      throw new Error(d.error || r.statusText);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = incId + "-report.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    toast("Incident report exported (JSON) — export is audit-logged.");
+  }catch(e){ toast("Export failed: "+e.message); }
+}
+window.exportIncidentReport = exportIncidentReport;
+
+/* ---------- cross-feed correlation: 911 near this incident ------------- */
+function nearbyEventsHtml(inc){
+  const inter = (grid?.intersections||[]).find(
+    x=>x.id===inc.intersection_id);
+  if(!inter) return "";
+  const cos = Math.cos(inter.lat * Math.PI/180);
+  const near = (emergencies||[]).map(e=>{
+    const dm = Math.hypot((e.lat-inter.lat)*111000,
+                          (e.lon-inter.lon)*111000*cos);
+    return {e, dm};
+  }).filter(x=>x.dm <= 400).sort((a,b)=>a.dm-b.dm).slice(0,5);
+  if(!near.length) return "";
+  return `<div class="gov" style="margin-top:8px">
+    <div class="govhead">Cross-Feed · 911 within 400 m
+      <span class="conf mono">${near.length}</span></div>
+    ${near.map(({e,dm})=>`
+      <div class="hotrow" style="padding:4px 8px" onclick="focusEmergency('${e.id}')"
+        title="Show this dispatch on the map">
+        <span>${EM_ICONS[e.category]||"📟"}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.type)} · ${esc(e.address)}</span>
+        <span class="mono" style="margin-left:auto;white-space:nowrap">${Math.round(dm)} m · ${fmtAgo(e.at)}</span>
+      </div>`).join("")}
+  </div>`;
 }
 
 function interName(iid){
@@ -2250,6 +2520,14 @@ function renderRoadAlerts(){
 async function fetchAnalytics(){
   if(Date.now() - analyticsLastFetch < 60000) return;   // 60s cadence
   analyticsLastFetch = Date.now();
+  // Deterministic loading state: spinner + skeleton until data lands.
+  if(!analyticsData){
+    const el = $("analytics");
+    if(el) el.innerHTML = `<p class="meta"><span class="spin"></span>
+      Loading analytics — aggregating congestion history…</p>
+      <div class="skel s24"></div><div class="skel"></div>
+      <div class="skel s24"></div>`;
+  }
   try{
     analyticsData = await api("/api/analytics?hours=24");
     renderAnalytics();
@@ -2271,7 +2549,7 @@ function congBarColor(v){
 function renderAnalytics(){
   const a = analyticsData;
   const el = $("analytics");
-  if(!a){ el.innerHTML = `<p class="meta">Loading analytics…</p>`; return; }
+  if(!a){ el.innerHTML = `<p class="meta"><span class="spin"></span>Loading analytics…</p>`; return; }
   if(!a.total_samples && !Object.keys(a.incident_counts||{}).length){
     el.innerHTML = `<p class="meta">No history yet — the platform records
       congestion samples every minute while running. Check back shortly.</p>`;
@@ -2314,6 +2592,26 @@ function renderAnalytics(){
     ${Object.entries(ic).map(([t,n])=>`<span class="pchip">⚠ ${n} ${t.replace(/_/g," ")}</span>`).join("")}
     ${a.vision_sweep?.incidents_confirmed?`<span class="pchip warn">👁 ${a.vision_sweep.incidents_confirmed} AI-detected</span>`:""}
   </div>`;
+  // SLA / response-time metrics: how fast this TOC acknowledges and
+  // clears incidents (median + p90 over the analytics window).
+  const rm = a.response_metrics;
+  if(rm && (rm.ack_count || rm.resolve_count)){
+    const f = s => s===null||s===undefined ? "—"
+      : s<90 ? Math.round(s)+"s"
+      : s<5400 ? Math.round(s/60)+"m" : (s/3600).toFixed(1)+"h";
+    html += `<div class="meta" style="margin-top:8px;text-transform:uppercase;
+      letter-spacing:.5px">Response time (SLA) · detect → act</div>
+      <div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-top:4px">
+        <div class="kpi" title="Median time from detection to operator acknowledgment (${rm.ack_count} acks)"><b>${f(rm.ack_median_s)}</b><span>ack median</span></div>
+        <div class="kpi" title="90th percentile time to acknowledgment"><b>${f(rm.ack_p90_s)}</b><span>ack p90</span></div>
+        <div class="kpi" title="Median time from detection to resolution (${rm.resolve_count} resolved)"><b>${f(rm.resolve_median_s)}</b><span>clear median</span></div>
+        <div class="kpi" title="90th percentile time to resolution"><b>${f(rm.resolve_p90_s)}</b><span>clear p90</span></div>
+      </div>`;
+  }
+  // Shift-handover report generator: one click → printable briefing.
+  html += `<div style="margin-top:8px"><button style="margin:0"
+    onclick="busy(this, showHandover)"
+    title="Generate the shift-handover briefing: open incidents (with operator notes), pending plans, executed changes, and governance actions in the window">📋 SHIFT HANDOVER REPORT</button></div>`;
   // WSDOT corridor travel times — current vs typical, slowest first.
   // Empty until WSDOT_ACCESS_CODE is configured server-side.
   if(travelTimes.length){
@@ -2332,6 +2630,40 @@ function renderAnalytics(){
   }
   el.innerHTML = html;
 }
+
+/* ---------- shift-handover report (printable briefing) ------------------ */
+async function showHandover(){
+  try{
+    const h = await api("/api/handover?hours=8");
+    const inc = h.open_incidents || [];
+    const pend = h.pending_plans || [];
+    const execd = h.executed_changes || [];
+    const resolved = h.resolved_in_window || [];
+    const incRow = i => `<div class="instr"><b>${esc(i.type.replace(/_/g," "))}</b>
+      · ${esc(i.intersection_name||i.intersection_id)}
+      · SEV ${(i.severity*100).toFixed(0)} · ${esc(i.state)}
+      · detected ${fmtAgo(i.detected_at)}
+      ${i.operator_notes?`<br><span style="color:var(--yellow)">NOTES:</span> ${esc(i.operator_notes)}`:""}</div>`;
+    $("modaltitle").textContent =
+      `Shift Handover · last ${Math.round(h.window_hours)}h · `
+      + `mode ${h.mode.toUpperCase()}`;
+    $("modalcontent").innerHTML = `
+      <div class="meta mono" style="margin-bottom:8px">generated ${fmtTime(h.generated_at)} by ${esc(h.generated_by)}
+        · audit chain ${h.audit_chain_intact?"✓ intact":"✕ BROKEN"}
+        · ${h.audit_actions_in_window} governance actions in window</div>
+      <div class="meta" style="text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Open incidents (${inc.length})</div>
+      ${inc.length ? inc.map(incRow).join("") : `<p class="meta">None — clean board.</p>`}
+      <div class="meta" style="text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Plans pending approval (${pend.length})</div>
+      ${pend.length ? pend.map(p=>`<div class="instr"><b>${esc(p.plan_id)}</b> · CONF ${p.confidence_score}% · incident ${esc(p.incident_id)}</div>`).join("") : `<p class="meta">None.</p>`}
+      <div class="meta" style="text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Executed changes still live (${execd.length})</div>
+      ${execd.length ? execd.map(p=>`<div class="instr"><b>${esc(p.plan_id)}</b> · executed ${fmtAgo(p.executed_at)} · targets ${(p.targets||[]).join(", ")}</div>`).join("") : `<p class="meta">None.</p>`}
+      <div class="meta" style="text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Resolved this window (${resolved.length})</div>
+      ${resolved.length ? resolved.slice(0,10).map(i=>`<div class="instr"><b>${esc(i.type.replace(/_/g," "))}</b> · ${esc(i.intersection_name||i.intersection_id)} · ${esc(i.resolution||"")}</div>`).join("") : `<p class="meta">None.</p>`}
+      <div style="margin-top:8px"><button style="margin:0" onclick="window.print()">🖨 PRINT BRIEFING</button></div>`;
+    $("modal").style.display = "flex";
+  }catch(e){ toast("Handover report failed: "+e.message); }
+}
+window.showHandover = showHandover;
 
 let visionStats = null, visionLastFetch = 0;
 async function fetchVisionStatus(){
@@ -2542,7 +2874,104 @@ document.addEventListener("keydown", e=>{
     e.preventDefault(); gAck(firstDetected.id); }
 });
 
+/* ---------- map place search (zero-dependency) --------------------------
+   Client-side fuzzy search over intersections + live cameras + 911
+   addresses. Falls back to OpenStreetMap Nominatim (HTTPS, allowed by
+   CSP connect-src) for arbitrary Seattle-area addresses/places. */
+let msTimer = null, msResults = [], msSel = -1, msNomSeq = 0;
+function msLocalSearch(q){
+  const ql = q.toLowerCase();
+  const out = [];
+  (grid?.intersections||[]).forEach(i=>{
+    if(i.name.toLowerCase().includes(ql))
+      out.push({label:i.name, kind:"signal", lat:i.lat, lon:i.lon,
+                iid:i.id});
+  });
+  (grid?.cameras||[]).forEach(c=>{
+    if(c.live_name && c.live_name.toLowerCase().includes(ql))
+      out.push({label:c.live_name, kind:"camera", lat:c.lat, lon:c.lon,
+                iid:c.intersection_id});
+  });
+  (emergencies||[]).forEach(e=>{
+    if(e.address && e.address.toLowerCase().includes(ql))
+      out.push({label:`${e.type} · ${e.address}`, kind:"911",
+                lat:e.lat, lon:e.lon, emid:e.id});
+  });
+  // De-dupe by label; local results first, capped.
+  const seen = new Set();
+  return out.filter(r=>{
+    if(seen.has(r.label)) return false;
+    seen.add(r.label); return true;
+  }).slice(0, 8);
+}
+function msRender(){
+  const box = $("msresults");
+  if(!msResults.length){ box.style.display = "none"; return; }
+  box.innerHTML = msResults.map((r,i)=>
+    `<div class="msrow ${i===msSel?"sel":""}" onmousedown="msPick(${i})">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)}</span>
+      <span class="k">${r.kind}</span>
+    </div>`).join("");
+  box.style.display = "block";
+}
+function msPick(i){
+  const r = msResults[i];
+  if(!r) return;
+  $("msresults").style.display = "none";
+  $("msinput").blur();
+  if(r.iid && interMarkers[r.iid]){ focusIntersection(r.iid); return; }
+  if(r.emid){ focusEmergency(r.emid); return; }
+  map.setView([r.lat, r.lon], 15);
+  L.popup().setLatLng([r.lat, r.lon])
+    .setContent(`<b>${esc(r.label)}</b><br><span style="color:#98A1AB">${r.kind}</span>`)
+    .openOn(map);
+}
+window.msPick = msPick;
+async function msNominatim(q){
+  const mySeq = ++msNomSeq;
+  try{
+    const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=5&viewbox=-122.46,47.75,-122.22,47.48&bounded=1&q="
+      + encodeURIComponent(q), {headers:{"Accept":"application/json"}});
+    if(!r.ok) return;
+    const rows = await r.json();
+    if(mySeq !== msNomSeq) return;   // superseded by newer keystrokes
+    const add = rows.map(x=>({
+      label: x.display_name.split(",").slice(0,3).join(","),
+      kind: "osm", lat: parseFloat(x.lat), lon: parseFloat(x.lon)}));
+    const seen = new Set(msResults.map(r=>r.label));
+    add.forEach(a=>{ if(!seen.has(a.label)) msResults.push(a); });
+    msResults = msResults.slice(0, 10);
+    msRender();
+  }catch(e){ /* offline / rate-limited — local results still shown */ }
+}
+function initMapSearch(){
+  const inp = $("msinput");
+  if(!inp) return;
+  inp.addEventListener("input", ()=>{
+    const q = inp.value.trim();
+    clearTimeout(msTimer);
+    if(q.length < 2){ msResults = []; msSel = -1; msRender(); return; }
+    msResults = msLocalSearch(q); msSel = -1; msRender();
+    // Debounced Nominatim fallback for arbitrary addresses/places.
+    msTimer = setTimeout(()=>msNominatim(q), 450);
+  });
+  inp.addEventListener("keydown", e=>{
+    if(e.key === "ArrowDown"){ e.preventDefault();
+      msSel = Math.min(msResults.length-1, msSel+1); msRender(); }
+    else if(e.key === "ArrowUp"){ e.preventDefault();
+      msSel = Math.max(0, msSel-1); msRender(); }
+    else if(e.key === "Enter"){ e.preventDefault();
+      msPick(msSel >= 0 ? msSel : 0); }
+    else if(e.key === "Escape"){ msResults = []; msRender(); inp.blur(); }
+  });
+  inp.addEventListener("blur", ()=>{
+    setTimeout(()=>{ $("msresults").style.display = "none"; }, 150);
+  });
+  inp.addEventListener("focus", ()=>{ if(msResults.length) msRender(); });
+}
+
 initMap();
+initMapSearch();
 renderUser();
 renderNotifToggle();
 renderAudioBtn();

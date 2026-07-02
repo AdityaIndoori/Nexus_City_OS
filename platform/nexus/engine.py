@@ -167,9 +167,12 @@ class NexusEngine:
             "intersection_id": inc.intersection_id,
             "severity": inc.severity, "state": inc.state.value,
             "detected_at": inc.detected_at,
+            "acknowledged_at": inc.acknowledged_at,
+            "resolved_at": inc.resolved_at,
             "resolution": inc.resolution,
             "description": inc.description,
             "detection_source": inc.detection_source,
+            "operator_notes": inc.operator_notes,
         }, now_ts())
 
     def _persist_plan(self, plan: ActionPlan) -> None:
@@ -567,6 +570,55 @@ class NexusEngine:
         self.emit_event("incident")
         return inc
 
+    def update_incident_notes(self, user_id: str, incident_id: str,
+                              notes: str) -> Incident:
+        """Operator notes: free-form, auto-saved from the workspace.
+        Persisted and audit-logged (notes are part of the operational
+        record for shift handover / legal discovery)."""
+        self._require(user_id, Role.OPERATOR, Role.ADMIN, Role.ANALYST)
+        inc = self.graph.incidents.get(incident_id)
+        if inc is None:
+            raise KeyError(f"Unknown incident {incident_id}")
+        notes = str(notes)[:4000]
+        if notes == inc.operator_notes:
+            return inc
+        inc.operator_notes = notes
+        self.audit.record(actor=user_id, action="incident_notes_updated",
+                          targets=[inc.intersection_id],
+                          after_state={"incident_id": inc.id,
+                                       "notes_len": len(notes)},
+                          detail=notes[:200])
+        self._persist_incident(inc)
+        return inc
+
+    def record_field_contact(self, user_id: str, incident_id: str,
+                             service: str, note: str = "") -> Incident:
+        """Log a field-operator dispatch contact (fire / police / ems /
+        traffic crew) against an incident. The contact is appended to the
+        incident action history and the hash-chained audit trail — the
+        governance record of WHO was asked to respond and WHEN."""
+        self._require(user_id, Role.OPERATOR, Role.ADMIN)
+        allowed = ("fire", "police", "ems", "traffic_crew", "other")
+        if service not in allowed:
+            raise ValueError(
+                f"service must be one of {', '.join(allowed)}")
+        inc = self.graph.incidents.get(incident_id)
+        if inc is None:
+            raise KeyError(f"Unknown incident {incident_id}")
+        note = str(note)[:500]
+        inc.action_history.append({
+            "at": now_ts(), "actor": user_id,
+            "action": f"field contact: {service.replace('_', ' ')}",
+            "notes": note})
+        self.audit.record(actor=user_id, action="field_contact",
+                          targets=[inc.intersection_id],
+                          after_state={"incident_id": inc.id,
+                                       "service": service},
+                          detail=note or f"dispatch notified: {service}")
+        self._persist_incident(inc)
+        self.emit_event("incident")
+        return inc
+
     def active_incidents(self) -> List[Incident]:
         with self._lock:
             incidents = [i for i in self.graph.incidents.values()
@@ -661,6 +713,8 @@ class NexusEngine:
             "camera_id": i.camera_id,
             "ai_justification": i.ai_justification,
             "ai_confidence": i.ai_confidence,
+            "operator_notes": i.operator_notes,
+            "acknowledged_at": i.acknowledged_at,
             "has_detection_frame": i.detection_frame_jpeg is not None,
             # The *exact* live camera the frozen frame came from. Several
             # cameras can share one intersection (different viewing

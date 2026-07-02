@@ -72,11 +72,39 @@ class Analytics:
         # -- incidents -------------------------------------------------------
         incident_counts: Dict[str, int] = {}
         vision_confirmed = 0
+        ack_deltas: List[float] = []      # detected → acknowledged (s)
+        resolve_deltas: List[float] = []  # detected → resolved (s)
+        resolved_n = 0
         for inc in self.store.incident_history(since):
             itype = str(inc.get("type", "unknown"))
             incident_counts[itype] = incident_counts.get(itype, 0) + 1
             if inc.get("detection_source") == "ai_vision":
                 vision_confirmed += 1
+            det = inc.get("detected_at")
+            ack = inc.get("acknowledged_at")
+            res = inc.get("resolved_at")
+            if isinstance(det, (int, float)):
+                if isinstance(ack, (int, float)) and ack >= det:
+                    ack_deltas.append(ack - det)
+                if isinstance(res, (int, float)) and res >= det:
+                    resolve_deltas.append(res - det)
+                    resolved_n += 1
+
+        # -- SLA / response-time metrics (median + p90, seconds) -------------
+        def _pct(vals: List[float], q: float) -> Optional[float]:
+            if not vals:
+                return None
+            s = sorted(vals)
+            idx = min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))
+            return round(s[idx], 1)
+        response_metrics = {
+            "ack_count": len(ack_deltas),
+            "ack_median_s": _pct(ack_deltas, 0.5),
+            "ack_p90_s": _pct(ack_deltas, 0.9),
+            "resolve_count": resolved_n,
+            "resolve_median_s": _pct(resolve_deltas, 0.5),
+            "resolve_p90_s": _pct(resolve_deltas, 0.9),
+        }
 
         # -- plan outcomes ------------------------------------------------------
         plan_outcomes = {bucket: 0 for bucket in OUTCOME_BUCKETS}
@@ -95,6 +123,7 @@ class Analytics:
             "hotspots": hotspots,
             "incident_counts": incident_counts,
             "plan_outcomes": plan_outcomes,
+            "response_metrics": response_metrics,
             "vision_sweep": {"incidents_confirmed": vision_confirmed},
             "total_samples": len(rows),
         }
