@@ -424,17 +424,17 @@
         </select>
       </label>
       <span class="abs">
-        <label>From <input type="datetime-local" id="q_from" onchange="loadIncidents()"></label>
-        <label>To <input type="datetime-local" id="q_to" onchange="loadIncidents()"></label>
+        <label>From <input type="datetime-local" id="q_from" onchange="onQueueControlsChange()"></label>
+        <label>To <input type="datetime-local" id="q_to" onchange="onQueueControlsChange()"></label>
       </span>
       <label>Sort
-        <select id="q_order" onchange="loadIncidents()" aria-label="Sort order">
+        <select id="q_order" onchange="onQueueControlsChange()" aria-label="Sort order">
           <option value="desc" selected>Newest first</option>
           <option value="asc">Oldest first</option>
         </select>
       </label>
       <label>Show
-        <select id="q_limit" onchange="loadIncidents()" aria-label="Page size">
+        <select id="q_limit" onchange="onQueueControlsChange()" aria-label="Page size">
           <option value="10">10</option>
           <option value="25" selected>25</option>
           <option value="50">50</option>
@@ -942,15 +942,21 @@ function notifyNewDispatches(){
 
 let emLastFetch = 0;
 let emInFlight = false;
+let emLastAge = 0;
 async function fetchEmergencies(){
   // 60s cadence, but only throttle AFTER a successful fetch — a failed or
   // still-empty first attempt must be retried by the next poll, never
-  // locked out for 60s (that was the "911 ×0" bug).
+  // locked out for 60s (that was the "911 ×0" bug). A time-range change
+  // (different desired age) bypasses the throttle so the new window loads
+  // immediately.
+  const age = emDesiredAge();
   if(emInFlight) return;
-  if(emLastFetch && Date.now() - emLastFetch < 60000) return;
+  if(age === emLastAge
+     && emLastFetch && Date.now() - emLastFetch < 60000) return;
   emInFlight = true;
   try{
-    const r = await api("/api/emergencies?age=3600");
+    const r = await api("/api/emergencies?age=" + age);
+    emLastAge = age;
     if(!r.available) return;              // adapter has no 911 feed (e.g. Tacoma)
     emergencies = r.emergencies || [];
     hazards = r.hazards || [];
@@ -1284,13 +1290,38 @@ function aiJustificationHtml(inc){
 
 /* ---------- Incident-queue controls (time range / sort / paging) ------- */
 
+// Any queue control change: re-render IMMEDIATELY with the new client-side
+// window/sort/limit (the 911 + road sections filter locally, so the effect
+// is instant), then refresh the server-side incident page in the background.
+function onQueueControlsChange(){
+  renderIncidents();
+  loadIncidents();
+  fetchEmergencies();   // re-fetches when the desired 911 age changed
+}
+window.onQueueControlsChange = onQueueControlsChange;
+
 function onRangeChange(){
   const v = $("q_range").value;
   incidentQuery.range = v;
   $("queuecontrols").classList.toggle("absmode", v === "abs");
-  loadIncidents();
+  onQueueControlsChange();
 }
 window.onRangeChange = onRangeChange;
+
+// The 911 feed fetch age follows the time-range selector (1h minimum,
+// 7 days maximum — the Socrata query returns the latest 80 dispatches).
+function emDesiredAge(){
+  const v = $("q_range") ? $("q_range").value : incidentQuery.range;
+  if(v === "abs" || v === "0") return 604800;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 3600), 604800) : 3600;
+}
+
+// Current "Show" page size as a number (applies to every queue section).
+function queueLimit(){
+  const n = parseInt(($("q_limit") && $("q_limit").value) || "25", 10);
+  return Number.isFinite(n) && n > 0 ? n : 25;
+}
 
 // Resolve the active time-range selector into an absolute [since, until]
 // epoch window (seconds). Used so the 911 dispatch list honors the SAME
@@ -1458,30 +1489,24 @@ function renderIncidents(){
     html += `</div>`;
   });
 
+  // Sort direction + page size shared by every section below.
+  const _ord = ($("q_order") ? $("q_order").value : "desc");
+  const _dir = _ord === "asc" ? 1 : -1;
+  const _limit = queueLimit();
+
   // 911 events (Citizen-style) appear below platform incidents, compact,
   // click-to-locate on the map. Traffic-impacting calls first.
   if(emVisible.length){
-    // The feed itself only pulls the last hour, so for ranges WIDER than an
-    // hour the list is capped at "last hour" regardless of the selector.
-    const emWinSecs = (() => {
-      const v = incidentQuery.range;
-      if(v === "abs" || v === "0") return Infinity;
-      const n = parseInt(v, 10);
-      return Number.isFinite(n) ? n : Infinity;
-    })();
-    const emLabel = emWinSecs <= 3600 ? emRangeLabel() : "last hour";
     html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
-      letter-spacing:.5px">911 dispatches · ${esc(emLabel)} · SFD live</div>`;
+      letter-spacing:.5px">911 dispatches · ${esc(emRangeLabel())} · SFD live</div>`;
 
     // Honor the same Sort selector as the incident queue. Traffic-impacting
     // calls still surface first; within each group, newest- or oldest-first
     // follows the dropdown.
-    const _ord = ($("q_order") ? $("q_order").value : "desc");
-    const _dir = _ord === "asc" ? 1 : -1;
     const sorted = [...emVisible].sort((a,b)=>
       (b.traffic_impacting - a.traffic_impacting) || (_dir * (b.at - a.at)));
 
-    sorted.slice(0, 25).forEach(e=>{
+    sorted.slice(0, _limit).forEach(e=>{
       const color = EM_COLORS[e.category] || EM_COLORS.other;
       html += `<div class="card emcard" style="border-left:3px solid ${color};padding:6px 10px"
         onclick="focusEmergency('${e.id}')" title="Show on map">
@@ -1496,12 +1521,12 @@ function renderIncidents(){
     });
   }
 
-  // Road alerts (WSDOT highway alerts + Waze reports) — newest first,
-  // within the same time window as the rest of the feed.
+  // Road alerts (WSDOT highway alerts + Waze reports) — honoring the same
+  // sort order and page size, within the same time window.
   if(roadVisible.length){
     html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
       letter-spacing:.5px">Road alerts · ${esc(emRangeLabel())} · WSDOT${wazeAlerts.length?"/Waze":""} live</div>`;
-    roadVisible.sort((x,y)=>y.at-x.at).slice(0,10).forEach(r=>{
+    roadVisible.sort((x,y)=>_dir * (y.at - x.at)).slice(0, _limit).forEach(r=>{
       if(r.kind==="wsdot"){
         const a = r.a;
         const hi = (a.priority==="Highest"||a.priority==="High");
