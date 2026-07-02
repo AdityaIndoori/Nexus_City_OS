@@ -1445,7 +1445,14 @@ function renderIncidents(){
   incidents.forEach(inc=>{
     const plansFor = plans.filter(p=>p.incident_id===inc.id);
     const latest = plansFor[0];
-    const name = inc.intersection_name || interName(inc.intersection_id);
+    // Location headline: for camera detections, use the DETECTING camera's
+    // name — the registry clusters several distinct cameras onto one map
+    // point, and the cluster's label (first camera) can differ from the
+    // camera that actually saw the incident (e.g. cluster "I-5 @ Olive Way"
+    // vs detecting cam "Denny Way & Yale St"). The headline must match the
+    // frozen-frame evidence, never contradict it.
+    const clusterName = inc.intersection_name || interName(inc.intersection_id);
+    const name = inc.camera_name || clusterName;
     const sc = sevColor(inc.severity);
     const aiChip = inc.detection_source === "ai_vision"
       ? `<span class="pchip warn" title="Detected autonomously by the AI vision sweep (Claude Haiku on live camera frames)">👁 AI-detected</span>`
