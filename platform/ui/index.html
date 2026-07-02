@@ -125,8 +125,6 @@
   .qctl .abs{display:none; gap:6px; align-items:center; flex-wrap:wrap;}
   .qctl.absmode .abs{display:flex;}
   .qctl .qcount{margin-left:auto; color:var(--dim);}
-  .typebar{display:flex; gap:5px; padding:4px 12px; flex-wrap:wrap;
-           border-bottom:1px solid var(--line); flex:0 0 auto;}
   /* AI classification justification (why this was flagged) */
   details.aiwhy{margin:6px 0; border:1px solid #2a3b66; border-radius:6px;
                 background:#0f1830;}
@@ -445,7 +443,6 @@
       </label>
       <span class="qcount" id="q_count"></span>
     </div>
-    <div class="typebar" id="typebar" role="group" aria-label="Filter by incident type"></div>
     <div class="body" id="incidents"></div>
 
   </section>
@@ -455,11 +452,14 @@
       <h2 style="display:flex;gap:10px;align-items:center">
         <span id="tab_safety" class="paneltab on" onclick="setPanelTab('safety')">AI Safety Metrics</span>
         <span id="tab_analytics" class="paneltab" onclick="setPanelTab('analytics')">Analytics</span>
-        <span id="tab_road" class="paneltab" onclick="setPanelTab('road')">Road Alerts <b id="roadcount" style="color:var(--warn)"></b></span>
+        <span id="tab_road" class="paneltab" onclick="setPanelTab('road')">Alerts <b id="roadcount" style="color:var(--warn)"></b></span>
       </h2>
       <div class="body" id="safety"></div>
       <div class="body" id="analytics" style="display:none"></div>
-      <div class="body" id="roadalerts" style="display:none"></div>
+      <div class="body" id="roadalertsbody" style="display:none">
+        <div id="alerts"></div>
+        <div id="roadalerts"></div>
+      </div>
     </section>
     <section class="panel" aria-label="AI copilot and alerts">
       <h2>AI Copilot <span style="float:right;text-transform:none;letter-spacing:0;color:var(--dim)">Claude Haiku 4.5 · grounded</span></h2>
@@ -469,7 +469,6 @@
           <input id="chatin" placeholder="Ask about congestion, incidents, transit…" style="flex:1" aria-label="Copilot question">
           <button class="primary" id="askbtn" onclick="busy(this, askCopilot)">Ask</button>
         </div>
-        <div id="alerts" style="margin-top:8px"></div>
       </div>
     </section>
     <section class="panel" aria-label="Audit trail">
@@ -543,19 +542,12 @@ let emergencies = [], hazards = [];
 let highwayAlerts = [], wazeAlerts = [], wazeJams = [];
 const layerOn = {traffic:true, bus:true, em:true, cams:true};
 // Queue/map category filters: which event classes are visible.
-const FILTERS = ["traffic_incidents","fire","mva","medical","rescue",
+const FILTERS = ["traffic_incidents","road","fire","mva","medical","rescue",
                  "hazmat","violence","other"];
-const FILTER_LABELS = {traffic_incidents:"⚠ Traffic", fire:"🔥 Fire",
-  mva:"🚗 MVA", medical:"🚑 Medical", rescue:"⛑ Rescue",
+const FILTER_LABELS = {traffic_incidents:"⚠ Traffic", road:"🛣 Road alerts",
+  fire:"🔥 Fire", mva:"🚗 MVA", medical:"🚑 Medical", rescue:"⛑ Rescue",
   hazmat:"☣ Hazmat", violence:"🚨 Violence", other:"📟 Other"};
 const filterOn = Object.fromEntries(FILTERS.map(f=>[f,true]));
-// Incident-type filters for the queue (independent of the category filters).
-const INCIDENT_TYPES = ["collision","stopped_vehicle","wrong_way_driver",
-                        "pedestrian_on_highway","congestion","transit_breakdown"];
-const TYPE_LABELS = {collision:"💥 Collision", stopped_vehicle:"🛑 Stopped",
-  wrong_way_driver:"↩ Wrong-way", pedestrian_on_highway:"🚶 Pedestrian",
-  congestion:"🚦 Congestion", transit_breakdown:"🚌 Transit"};
-const typeOn = Object.fromEntries(INCIDENT_TYPES.map(t=>[t,true]));
 // Incident-queue query state (time range / sort / paging). `range` is a
 // window in seconds (0 = all time, "abs" = absolute From/To inputs).
 const incidentQuery = {range:"86400", order:"desc", limit:25};
@@ -827,7 +819,7 @@ function buildMsdd(host, label, keys, labels, state, counts, onChangeName, allFn
 
 function toggleMsdd(host){
   _msddOpen = (_msddOpen === host) ? null : host;
-  renderFilterBar(); renderTypeBar();
+  renderFilterBar();
 }
 window.toggleMsdd = toggleMsdd;
 
@@ -835,7 +827,7 @@ window.toggleMsdd = toggleMsdd;
 document.addEventListener("click", e=>{
   if(_msddOpen && !e.target.closest(".msdd")){
     _msddOpen = null;
-    renderFilterBar(); renderTypeBar();
+    renderFilterBar();
   }
 });
 
@@ -852,6 +844,7 @@ function renderFilterBar(){
     counts[k] = (counts[k]||0) + 1;
   });
   counts.traffic_incidents = (status_?.incidents||[]).length;
+  counts.road = (highwayAlerts||[]).length + (wazeAlerts||[]).length;
   buildMsdd("filterbar", "Categories", FILTERS, FILTER_LABELS,
             filterOn, counts, "toggleFilter", "setAllFilters");
 }
@@ -1260,7 +1253,8 @@ function fmtAgo(ts){
   const s = Math.max(0, Math.round(Date.now()/1000 - ts));
   if(s < 60) return `${s}s ago`;
   if(s < 3600) return `${Math.floor(s/60)}m ${s%60}s ago`;
-  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ago`;
+  if(s < 172800) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ago`;
+  return `${Math.floor(s/86400)}d ago`;   // long-running (e.g. construction)
 }
 function sevColor(s){ return s>0.7 ? "var(--bad)" : s>0.4 ? "var(--warn)" : "var(--good)"; }
 
@@ -1288,21 +1282,7 @@ function aiJustificationHtml(inc){
     </div></details>`;
 }
 
-/* ---------- Incident-queue controls (time range / sort / paging / type) */
-
-function setAllTypes(on){
-  INCIDENT_TYPES.forEach(t=>{ typeOn[t] = on; });
-  renderTypeBar(); loadIncidents();
-}
-window.setAllTypes = setAllTypes;
-
-function renderTypeBar(){
-  buildMsdd("typebar", "Incident types", INCIDENT_TYPES, TYPE_LABELS,
-            typeOn, null, "toggleType", "setAllTypes");
-}
-function toggleType(t){ typeOn[t] = !typeOn[t]; renderTypeBar(); loadIncidents(); }
-window.toggleType = toggleType;
-
+/* ---------- Incident-queue controls (time range / sort / paging) ------- */
 
 function onRangeChange(){
   const v = $("q_range").value;
@@ -1370,11 +1350,6 @@ async function loadIncidents(){
   } else if(range !== "0"){
     params.set("window", range);
   }
-  const types = INCIDENT_TYPES.filter(t=>typeOn[t]);
-  if(types.length && types.length < INCIDENT_TYPES.length)
-    params.set("types", types.join(","));
-  // If every type is OFF, there's nothing to show.
-  if(!types.length){ queueIncidents = []; queueTotal = 0; renderIncidents(); return; }
   // Sequence guard: a dropdown change races with the 3s SSE refresh + 15s
   // poll, all calling loadIncidents(). Without this, a slower earlier
   // request can resolve AFTER the user's newer one and overwrite it with
@@ -1410,14 +1385,24 @@ function renderIncidents(){
     (filterOn[emFilterKey(e.category)] ?? true)
     && (emWin.since === null || e.at >= emWin.since)
     && (emWin.until === null || e.at <= emWin.until));
+  // Road alerts (WSDOT + Waze) join the unified feed, honoring the same
+  // Categories filter and time-range selector — a "Last 24 hours" window
+  // naturally hides weeks-old construction notices.
+  const roadAll = filterOn.road ? [
+    ...(highwayAlerts||[]).map(a=>({kind:"wsdot", at:a.updated_at||0, a})),
+    ...(wazeAlerts||[]).map(w=>({kind:"waze", at:w.at||0, w})),
+  ] : [];
+  const roadVisible = roadAll.filter(r =>
+    (emWin.since === null || r.at >= emWin.since)
+    && (emWin.until === null || r.at <= emWin.until));
 
   // Result count for the current query window.
   const qc = $("q_count");
   if(qc) qc.textContent = filterOn.traffic_incidents
     ? `${incidents.length}${queueTotal>incidents.length?" of "+queueTotal:""} incident${incidents.length===1?"":"s"}`
     : "traffic filter off";
-  if(!incidents.length && !emVisible.length){
-    wrap.innerHTML = `<p class="meta">No incidents match the current time range / type filters.</p>
+  if(!incidents.length && !emVisible.length && !roadVisible.length){
+    wrap.innerHTML = `<p class="meta">No incidents match the current time range / category filters.</p>
       <p class="meta" style="margin-top:6px">Widen the time range above, or click any
       intersection on the map to view its live camera, run AI vision analysis,
       or inject a scenario. Or:</p>
@@ -1508,6 +1493,35 @@ function renderIncidents(){
         </div>
         <div class="meta">📍 ${esc(e.address)}</div>
       </div>`;
+    });
+  }
+
+  // Road alerts (WSDOT highway alerts + Waze reports) — newest first,
+  // within the same time window as the rest of the feed.
+  if(roadVisible.length){
+    html += `<div class="meta" style="margin:10px 0 4px;text-transform:uppercase;
+      letter-spacing:.5px">Road alerts · ${esc(emRangeLabel())} · WSDOT${wazeAlerts.length?"/Waze":""} live</div>`;
+    roadVisible.sort((x,y)=>y.at-x.at).slice(0,10).forEach(r=>{
+      if(r.kind==="wsdot"){
+        const a = r.a;
+        const hi = (a.priority==="Highest"||a.priority==="High");
+        html += `<div class="card" style="border-left:3px solid ${hi?"var(--bad)":"var(--warn)"};padding:6px 10px">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <span>🛣</span><b>WSDOT: ${esc(a.category)}</b>
+            ${hi?'<span class="pchip warn">high priority</span>':""}
+            <span class="meta" style="margin-left:auto" title="${fmtTime(a.updated_at)}">${fmtAgo(a.updated_at)}</span></div>
+          <div class="meta">${esc(a.road)}${a.road?" — ":""}${esc(a.headline)}</div>
+        </div>`;
+      } else {
+        const w = r.w;
+        html += `<div class="card" style="border-left:3px solid #b06cff;padding:6px 10px">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <span>〰</span><b>Waze: ${esc(w.type)}</b>
+            <span class="pchip">reliability ${w.reliability}/10</span>
+            <span class="meta" style="margin-left:auto" title="${fmtTime(w.at)}">${fmtAgo(w.at)}</span></div>
+          <div class="meta">📍 ${esc(w.street||"")}</div>
+        </div>`;
+      }
     });
   }
   wrap.innerHTML = html;
@@ -1732,7 +1746,7 @@ function setPanelTab(tab){
   $("tab_road").classList.toggle("on", tab==="road");
   $("safety").style.display = tab==="safety" ? "" : "none";
   $("analytics").style.display = tab==="analytics" ? "" : "none";
-  $("roadalerts").style.display = tab==="road" ? "" : "none";
+  $("roadalertsbody").style.display = tab==="road" ? "" : "none";
   if(tab==="analytics"){ analyticsLastFetch = 0; fetchAnalytics(); }
   if(tab==="road") renderRoadAlerts();
 }
@@ -2030,7 +2044,6 @@ document.addEventListener("keydown", e=>{
 initMap();
 renderUser();
 renderNotifToggle();
-renderTypeBar();
 
 if(CF_ACCESS){
   // Cloudflare Access handled sign-in at the edge — no in-app login.
