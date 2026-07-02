@@ -11,6 +11,7 @@ start-nexus.ps1
 platform/data/*.db
 platform/data/*.db-wal
 platform/data/*.db-shm
+platform/data/*.db.bak-*
 platform/data/road_geometry.json
 server_boot.log
 *.log
