@@ -88,6 +88,14 @@ DEFAULT_DB = _os.environ.get(
 PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz",
                  "/landing", "/landing/"}
 
+# Dedicated marketing hostname (e.g. nexuscity.aindoori.com) — when a
+# request arrives with this Host, the LANDING PAGE is served at "/" and
+# the operator console is NOT reachable on that hostname at all. The
+# landing page's console links point at NEXUS_CONSOLE_URL (the
+# Access-gated console hostname).
+LANDING_HOST = _os.environ.get("NEXUS_LANDING_HOST", "").strip().lower()
+CONSOLE_URL = _os.environ.get("NEXUS_CONSOLE_URL", "/").strip() or "/"
+
 # Multi-city adapter registry (Phase 4 — City Adapter SDK).
 CITY_ADAPTERS = {
     "seattle": (SeattleLiveAdapter, "Seattle, WA"),
@@ -409,10 +417,37 @@ def make_handler(runtime: PlatformRuntime):
 
         # ---- GET -------------------------------------------------------
 
+        def _is_landing_host(self) -> bool:
+            if not LANDING_HOST:
+                return False
+            host = (self.headers.get("Host") or "").split(":")[0].lower()
+            return host == LANDING_HOST
+
+        def _serve_landing(self) -> None:
+            html = LANDING_PATH.read_text(encoding="utf-8")
+            # On the dedicated landing host, console links point at the
+            # (Access-gated) console hostname; on the console origin's
+            # /landing route they stay same-origin.
+            html = html.replace(
+                "__CONSOLE_URL__",
+                CONSOLE_URL if self._is_landing_host() else "/")
+            self._send_html(html)
+
         def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
             parsed = urlparse(self.path)
             route = parsed.path
             try:
+                # Dedicated marketing hostname: serve ONLY the landing page
+                # and its assets — the console/API are not exposed here.
+                if self._is_landing_host():
+                    if route == "/healthz":
+                        self._send_json({"ok": True, "page": "landing"})
+                        return
+                    if route.startswith("/landing-assets/"):
+                        pass   # fall through to the shared asset handler
+                    else:
+                        self._serve_landing()
+                        return
                 if route == "/healthz":
                     # Lightweight unauthenticated liveness probe for load
                     # balancers / uptime monitors — avoids rendering the
@@ -424,8 +459,7 @@ def make_handler(runtime: PlatformRuntime):
                 if route in ("/landing", "/landing/"):
                     # Public marketing page (no auth): explains the platform
                     # to prospective cities with real screenshots.
-                    self._send_html(
-                        LANDING_PATH.read_text(encoding="utf-8"))
+                    self._serve_landing()
                     return
                 if route.startswith("/landing-assets/"):
                     # Static screenshot assets for the landing page.

@@ -41,9 +41,17 @@ Still in the tunnel's config → **Public Hostname → Add a public hostname**:
    (add teammates), or **Emails ending in** = `@yourorg.com`.
 4. Save.
 
-> Tip: to keep the marketing page public while gating the console, add a
-> second Access application for `APP_HOST/landing` with a **Bypass** policy
-> (Everyone) — `/landing` is served without app auth either way.
+> Tip: to keep the marketing page public while gating the console, give the
+> landing page **its own subdomain** on the same tunnel (this is how the
+> reference deployment runs it): add a second ingress hostname (e.g.
+> `nexuscity.aindoori.com` → the same `http://localhost:8757`) in
+> `~/.cloudflared/config.yml`, route DNS with
+> `cloudflared tunnel route dns <tunnel> nexuscity.aindoori.com`, and set
+> `NEXUS_LANDING_HOST=nexuscity.aindoori.com` +
+> `NEXUS_CONSOLE_URL=https://nexus.aindoori.com/` in the launcher. Requests
+> arriving with the landing Host get ONLY the marketing page (no console, no
+> API); the console hostname stays fully Access-gated. Do **not** add an
+> Access application on the landing hostname.
 
 ## Step 4 — Copy the two identifiers the app needs
 - **AUD tag:** open the app → it shows the **Application Audience (AUD) Tag**
