@@ -74,6 +74,8 @@ from .vision import VisionSweep
 import os as _os
 
 UI_PATH = Path(__file__).resolve().parent.parent / "ui" / "index.html"
+LANDING_PATH = Path(__file__).resolve().parent.parent / "ui" / "landing.html"
+LANDING_ASSETS = Path(__file__).resolve().parent.parent / "ui" / "landing-assets"
 TICK_INTERVAL_S = 3.0
 # DB path is env-overridable (NEXUS_DB_PATH) so a deployment can point at a
 # mounted volume or force a fresh store without a code change.
@@ -83,7 +85,8 @@ DEFAULT_DB = _os.environ.get(
 
 
 # Routes that do not require a session token.
-PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz"}
+PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz",
+                 "/landing", "/landing/"}
 
 # Multi-city adapter registry (Phase 4 — City Adapter SDK).
 CITY_ADAPTERS = {
@@ -417,6 +420,33 @@ def make_handler(runtime: PlatformRuntime):
                     self._send_json({"ok": True,
                                      "mode": engine.mode.value,
                                      "city": engine.city_id})
+                    return
+                if route in ("/landing", "/landing/"):
+                    # Public marketing page (no auth): explains the platform
+                    # to prospective cities with real screenshots.
+                    self._send_html(
+                        LANDING_PATH.read_text(encoding="utf-8"))
+                    return
+                if route.startswith("/landing-assets/"):
+                    # Static screenshot assets for the landing page.
+                    name = route.rsplit("/", 1)[-1]
+                    # Path-traversal guard: bare filename, png only.
+                    if ("/" in name or "\\" in name or ".." in name
+                            or not name.endswith(".png")):
+                        self._send_json({"error": "not found"}, 404)
+                        return
+                    asset = LANDING_ASSETS / name
+                    if not asset.is_file():
+                        self._send_json({"error": "not found"}, 404)
+                        return
+                    payload = asset.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control",
+                                     "public, max-age=3600")
+                    self.end_headers()
+                    self.wfile.write(payload)
                     return
                 if route in ("/", "/index.html"):
                     html = UI_PATH.read_text(encoding="utf-8")
