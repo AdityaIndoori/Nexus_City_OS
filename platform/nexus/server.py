@@ -415,8 +415,8 @@ def make_handler(runtime: PlatformRuntime):
             try:
                 if route == "/healthz":
                     # Lightweight unauthenticated liveness probe for load
-                    # balancers / Render health checks — avoids rendering
-                    # the full UI on every probe.
+                    # balancers / uptime monitors — avoids rendering the
+                    # full UI on every probe.
                     self._send_json({"ok": True,
                                      "mode": engine.mode.value,
                                      "city": engine.city_id})
@@ -1079,7 +1079,7 @@ def build_arg_parser():
     """CLI for direct module launch and platform/run.py (Phase 5)."""
     import argparse
     import os
-    # Cloud hosts (Render, Railway, Fly, Cloud Run, Heroku) inject the bind
+    # Container hosts (Railway, Fly, Cloud Run, Heroku…) inject the bind
     # port via $PORT; honor it so the same image deploys unchanged. $HOST
     # lets a platform override the bind address (default 0.0.0.0 when $PORT
     # is set, since cloud hosts always need all-interfaces binding).

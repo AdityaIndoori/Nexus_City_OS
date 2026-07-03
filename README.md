@@ -85,27 +85,27 @@ docker run -p 8757:8757 nexus-city-os --city tacoma # Tacoma
 CI (`.github/workflows/ci.yml`) runs the full test suite on Python 3.10 and
 3.12 plus a Docker build on every push.
 
-### Deploy a live public instance (Render)
+### Deploy a live public instance (Cloudflare Tunnel)
 
 The platform is a **stateful, long-lived server** (background tick loop, AI
-vision sweep, `/api/events` SSE push) — so it belongs on a container host,
-not a serverless/static one. GitHub Pages and Vercel are perfect for the
-[landing page](https://adityaindoori.github.io/Nexus_City_OS/) but cannot run
-the backend; **Render / Railway / Fly.io** run the Docker image as-is.
+vision sweep, `/api/events` SSE push). The reference deployment runs it on a
+local machine and publishes it through a **Cloudflare Tunnel** — no inbound
+ports, free HTTPS, and Cloudflare's edge (WAF, DDoS protection, rate
+limiting) in front:
 
-A one-click [Render Blueprint](render.yaml) is included:
+1. Run the platform locally: `python platform/run.py` (or the Docker image).
+2. Zero Trust → **Networks → Tunnels → Create a tunnel**, run `cloudflared`
+   with the tunnel token on the same machine.
+3. Add a **Public Hostname** (e.g. `nexus.yourdomain.com`) pointing at
+   `http://localhost:8757`.
+4. *(Optional)* set `NEXUS_LLM_BASE_URL` / `NEXUS_LLM_API_KEY` (AI plans +
+   vision + copilot) and `WSDOT_ACCESS_CODE` (freeway flow) — **omit them
+   and the platform still runs**, falling back to the deterministic expert
+   system and bus-GPS-only congestion.
 
-1. **New → Blueprint** in Render, pick this repo (Render reads `render.yaml`).
-2. Apply. Render builds the `Dockerfile`, attaches a 1 GB disk for the
-   SQLite audit chain + road-geometry cache, and serves a public HTTPS URL.
-3. *(Optional)* set `NEXUS_LLM_BASE_URL` / `NEXUS_LLM_API_KEY` (AI plans +
-   vision + copilot) and `WSDOT_ACCESS_CODE` (freeway flow) in the dashboard
-   — **omit them and the platform still runs**, falling back to the
-   deterministic expert system and bus-GPS-only congestion.
-
-The container honors the host's injected `$PORT` (the server defaults
-`--port` to `$PORT` and `--host` to `0.0.0.0` whenever `$PORT` is present),
-so the same image runs unchanged locally and on any cloud.
+The server also honors an injected `$PORT` (defaults `--port` to `$PORT` and
+`--host` to `0.0.0.0` whenever `$PORT` is present), so the same image runs
+unchanged on any container host if you prefer one.
 
 ### Hardening a public deployment
 
@@ -113,10 +113,10 @@ The app-logic security (PBKDF2 credentials, HMAC bearer sessions, per-user
 lockout, RBAC, prompt-injection guard, hash-chained audit) is always on. For
 **public internet exposure**, two extra layers are included/recommended:
 
-**1. Cloudflare in front of the Render origin (infra — strongly recommended).**
-Point a Cloudflare-proxied DNS record at the Render URL for free DDoS
-protection, a WAF, edge rate-limiting, and bot scoring — the primary edge
-shield.
+**1. Cloudflare in front of the origin (infra — strongly recommended).**
+With the Tunnel deployment above the origin is never directly reachable —
+all traffic passes Cloudflare's edge for free DDoS protection, a WAF, edge
+rate-limiting, and bot scoring — the primary edge shield.
 
 > **Cloudflare authentication options.** The platform supports two
 > complementary Cloudflare auth layers, neither of which requires storing a

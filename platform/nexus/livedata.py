@@ -265,7 +265,8 @@ def _us_pacific_is_dst(dt: "datetime") -> bool:
 
 def _pacific_naive_to_epoch(ts: str) -> float:
     """Convert a naive 'YYYY-MM-DDTHH:MM:SS' string in America/Los_Angeles
-    to a true Unix epoch, independent of the SERVER's timezone (Render = UTC).
+    to a true Unix epoch, independent of the SERVER's timezone (a UTC host
+    would otherwise shift every timestamp).
 
     The Socrata 911 feed stamps dispatches in Pacific local time with no tz
     suffix; reading them with time.mktime() on a UTC host shifted everything
@@ -493,9 +494,9 @@ class SeattleLiveData:
                 raw_type.lower(), ("other", False))
             # Socrata `datetime` is America/Los_Angeles local time with NO
             # timezone suffix. We must convert it to a true epoch using the
-            # Pacific offset — NOT the server's local zone. (Render runs in
-            # UTC, so the old time.mktime() read every dispatch ~7h in the
-            # future and the "last hour" filter dropped them all → 911 ×0.)
+            # Pacific offset — NOT the server's local zone. (On a UTC host
+            # the old time.mktime() read every dispatch ~7h in the future
+            # and the "last hour" filter dropped them all → 911 ×0.)
             ts = str(r.get("datetime", ""))
             at = _pacific_naive_to_epoch(ts[:19])
 

@@ -16,7 +16,7 @@
 # All server flags pass through:  ENTRYPOINT args + CMD → python run.py.
 set -eu
 
-# The app binds the host-provided $PORT (Render/Railway/etc. inject it;
+# The app binds the host-provided $PORT (container hosts inject it;
 # defaults to 8757 locally). The host health-check expects the app on $PORT,
 # so we always bind it — whether or not a tunnel is running.
 PORT="${PORT:-8757}"

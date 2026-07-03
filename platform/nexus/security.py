@@ -1,7 +1,8 @@
 """
 Nexus City OS — public-edge security hardening (stdlib only).
 
-When the platform is exposed on the open internet (e.g. Render), the
+When the platform is exposed on the open internet (e.g. via a Cloudflare
+Tunnel), the
 app-logic auth (``nexus.auth``) is necessary but not sufficient. This module
 adds the abuse-prevention controls that matter at the network edge:
 
@@ -13,7 +14,7 @@ adds the abuse-prevention controls that matter at the network edge:
     single-file UI, and Referrer-Policy. Applied to every response.
   * client_ip() — trusts Cloudflare's CF-Connecting-IP / X-Forwarded-For
     ONLY when the platform is configured behind a trusted proxy (Cloudflare
-    in front of Render), otherwise uses the socket peer (prevents IP
+    Tunnel in front of the origin), otherwise uses the socket peer (prevents IP
     spoofing of the rate limiter when directly exposed).
   * verify_turnstile() — server-side Cloudflare Turnstile (CAPTCHA)
     verification for the login path on public deployments.
@@ -42,8 +43,8 @@ RATE_LOGIN_CAPACITY = int(os.environ.get("NEXUS_RATE_LOGIN", "8"))
 RATE_LOGIN_WINDOW_S = float(os.environ.get("NEXUS_RATE_LOGIN_WINDOW", "60"))
 # Max request body accepted (bytes) — guards against memory-DoS.
 MAX_BODY_BYTES = int(os.environ.get("NEXUS_MAX_BODY_BYTES", str(64 * 1024)))
-# Trust proxy headers for the client IP (set true when Cloudflare/Render is
-# in front; false when the origin is directly internet-exposed).
+# Trust proxy headers for the client IP (set true when Cloudflare is in
+# front; false when the origin is directly internet-exposed).
 TRUST_PROXY = os.environ.get("NEXUS_TRUST_PROXY", "1") not in ("0", "false",
                                                                "False", "")
 # Cloudflare Turnstile secret (server-side verification); empty disables it.
@@ -61,7 +62,7 @@ def security_headers(csp: bool = True) -> Dict[str, str]:
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "no-referrer",
-        # HSTS is safe because Cloudflare/Render terminate TLS; harmless on
+        # HSTS is safe because Cloudflare terminates TLS; harmless on
         # plain HTTP (browsers ignore it without https).
         "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
         "Cross-Origin-Opener-Policy": "same-origin",
