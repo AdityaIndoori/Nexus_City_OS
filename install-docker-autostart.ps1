@@ -20,6 +20,7 @@
 $ErrorActionPreference = "Stop"
 $Root = "d:\Software_Projects\NexusCityOS"
 $TaskName = "NexusCityOS-Docker"
+Start-Transcript -Path "$Root\install-task.log" -Force | Out-Null
 
 if (-not ([Security.Principal.WindowsPrincipal] `
     [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -63,3 +64,4 @@ Register-ScheduledTask -TaskName $TaskName -Action $action `
 Write-Host "Installed scheduled task '$TaskName' (runs as SYSTEM at boot)."
 Write-Host "Test now with:  Start-ScheduledTask -TaskName $TaskName"
 Write-Host "Remove with:    Unregister-ScheduledTask -TaskName $TaskName"
+Stop-Transcript | Out-Null
