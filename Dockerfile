@@ -22,7 +22,10 @@ RUN set -eux; \
 COPY platform/ ./platform/
 COPY models.json ./models.json
 
-RUN chmod +x platform/scripts/entrypoint.sh
+# Normalize line endings (Windows checkouts produce CRLF, which breaks the
+# shebang inside the Linux container) and mark executable.
+RUN sed -i 's/\r$//' platform/scripts/entrypoint.sh && \
+    chmod +x platform/scripts/entrypoint.sh
 
 # Persistent state (SQLite store, road-geometry cache) lives here;
 # mount a volume at /app/platform/data to survive container rebuilds.
