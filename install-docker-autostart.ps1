@@ -1,21 +1,17 @@
-# Nexus City OS — install BOOT-TIME (pre-login) Docker autostart.
+# Nexus City OS - install BOOT-TIME (pre-login) Docker autostart.
 #
 # Creates a Windows Scheduled Task that runs AT SYSTEM STARTUP as SYSTEM
 # (no user logon required) and brings up the dockerized stack:
 #   docker compose --profile tunnel up -d
 #
 # REQUIREMENTS (one-time, see DOCKER_AUTOSTART.md):
-#   * Docker engine must itself start at boot without login. Two options:
-#       A) Docker Desktop + WSL2: enable "Start Docker Desktop when you log in"
-#          is NOT enough — instead ALSO create the DockerDesktop service
-#          trigger below, or (recommended)
-#       B) Run dockerd inside WSL2 with WSL "boot" support, or use
-#          Docker Desktop >= 4.30 "Start Docker Desktop before sign-in"
-#          (Settings → General) which installs a Windows service.
-#   * Copy .env.example → .env and fill in secrets (git-ignored).
+#   * Docker engine must itself start at boot without login (Docker Desktop
+#     "Start Docker Desktop before you sign in" setting, or a dockerd service).
+#   * Copy .env.example to .env and fill in secrets (git-ignored).
 #   * The stack must have been built once: docker compose build
 #
-# Run elevated:  powershell -ExecutionPolicy Bypass -File install-docker-autostart.ps1
+# Run elevated:
+#   powershell -ExecutionPolicy Bypass -File install-docker-autostart.ps1
 
 $ErrorActionPreference = "Stop"
 $Root = "d:\Software_Projects\NexusCityOS"
@@ -59,7 +55,7 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false `
     -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $TaskName -Action $action `
     -Trigger $trigger -Principal $principal -Settings $settings `
-    -Description "Nexus City OS — docker compose up at boot (pre-login)" | Out-Null
+    -Description "Nexus City OS - docker compose up at boot (pre-login)" | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName' (runs as SYSTEM at boot)."
 Write-Host "Test now with:  Start-ScheduledTask -TaskName $TaskName"
