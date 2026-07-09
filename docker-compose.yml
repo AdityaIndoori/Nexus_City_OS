@@ -50,3 +50,7 @@ services:
 
 volumes:
   nexus-data:
+    # Pre-seeded outside compose (state migrated from the non-Docker
+    # deployment), so compose must treat it as external.
+    name: nexuscityos_nexus-data
+    external: true

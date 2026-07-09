@@ -25,6 +25,9 @@ if (-not ([Security.Principal.WindowsPrincipal] `
 }
 
 # Startup command: wait for the Docker engine, then compose up.
+# compose runs through cmd /c so its (harmless) stderr progress output
+# doesn't get converted into a PowerShell NativeCommandError -> task rc 1;
+# the task result reflects docker compose's REAL exit code.
 $cmd = @"
 `$deadline = (Get-Date).AddMinutes(5)
 while ((Get-Date) -lt `$deadline) {
@@ -33,8 +36,8 @@ while ((Get-Date) -lt `$deadline) {
     Start-Sleep -Seconds 10
 }
 Set-Location '$Root'
-docker compose --profile tunnel up -d 2>&1 |
-    Out-File '$Root\docker-autostart.log' -Encoding utf8
+cmd /c "docker compose --profile tunnel up -d > `"$Root\docker-autostart.log`" 2>&1"
+exit `$LASTEXITCODE
 "@
 $encoded = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes($cmd))
