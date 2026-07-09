@@ -50,12 +50,17 @@ docker compose --profile tunnel up -d
 
 Pick one:
 
-* **Docker Desktop (easiest):** Settings → General → enable
-  **"Start Docker Desktop when you sign in"** *and* (Docker Desktop 4.31+)
-  **Settings → General → "Start Docker Desktop before you sign in"**
-  (requires admin; installs a Windows service that boots the engine
-  pre-login). If your version has the option under
-  `Settings → Advanced → "Enable Windows service"`, use that.
+* **Docker Desktop:** Settings → General → enable
+  **"Start Docker Desktop when you sign in to your computer"**
+  (`autoStart: true` in `%APPDATA%\Docker\settings.json` — already set on
+  this machine). Note: Docker Desktop ≤ 4.36 (this machine runs 4.34) has
+  **no true pre-login engine service** — the engine starts at user sign-in.
+  The boot runner (`boot-docker-up.ps1`) additionally best-effort launches
+  Docker Desktop if the engine is down and waits up to 5 minutes.
+  For genuine before-sign-in start, either upgrade to a Docker Desktop
+  version exposing "Start Docker Desktop before you sign in" / the Windows
+  service option, or enable Windows **auto-logon** for this machine
+  (netplwiz) so sign-in happens automatically at boot.
 * **Without Docker Desktop:** run the engine inside WSL2 and enable WSL
   boot-time start (`wsl.exe --install`, then a scheduled task running
   `wsl -d <distro> -u root service docker start` at startup), or install
