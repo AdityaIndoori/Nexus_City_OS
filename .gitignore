@@ -1,6 +1,7 @@
 # Secrets — never commit
 llm_config.json
 nexus-secrets.ps1
+.env
 
 # local cloudflared binary
 bin/

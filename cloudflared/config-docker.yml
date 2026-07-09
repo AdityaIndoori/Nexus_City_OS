@@ -1,0 +1,16 @@
+# Cloudflare Tunnel ingress for the DOCKERIZED deployment.
+# Used by the `cloudflared` sidecar in docker-compose.yml (profile: tunnel).
+# Origin points at the `nexus` compose service (not localhost — the tunnel
+# runs in its own container on the compose network).
+#
+# Credentials come from the host's ~/.cloudflared mount (cert.pem + the
+# <tunnel-id>.json created by `cloudflared tunnel create nexus-local`).
+tunnel: b2ec46c6-fc48-4a24-8d03-acc1f6fe4cc1
+credentials-file: /home/nonroot/.cloudflared/b2ec46c6-fc48-4a24-8d03-acc1f6fe4cc1.json
+
+ingress:
+  - hostname: nexus.aindoori.com
+    service: http://nexus:8757
+  - hostname: nexuscity.aindoori.com
+    service: http://nexus:8757
+  - service: http_status:404

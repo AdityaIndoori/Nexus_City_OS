@@ -4,7 +4,7 @@ services:
     image: nexus-city-os:latest
     container_name: nexus-city-os
     ports:
-      - "8757:8757"
+      - "127.0.0.1:8757:8757"   # loopback only — public traffic enters via the tunnel
     volumes:
       # Durable state: SQLite store (audit chain, history) + geometry cache.
       - nexus-data:/app/platform/data
@@ -12,9 +12,41 @@ services:
       # Optional: enables WSDOT loop-detector flow ingestion for the
       # real-congestion estimator (bus-GPS-only without it).
       - WSDOT_ACCESS_CODE=${WSDOT_ACCESS_CODE:-}
+      # Optional LLM gateway (AI plans + vision + copilot); deterministic
+      # expert system without it.
+      - NEXUS_LLM_BASE_URL=${NEXUS_LLM_BASE_URL:-}
+      - NEXUS_LLM_API_KEY=${NEXUS_LLM_API_KEY:-}
+      # Cloudflare Access-only sign-in (see CLOUDFLARE_ACCESS_SETUP.md).
+      - NEXUS_CF_ACCESS_TEAM_DOMAIN=${NEXUS_CF_ACCESS_TEAM_DOMAIN:-}
+      - NEXUS_CF_ACCESS_AUD=${NEXUS_CF_ACCESS_AUD:-}
+      - NEXUS_CF_ACCESS_ADMINS=${NEXUS_CF_ACCESS_ADMINS:-}
+      - NEXUS_CF_ACCESS_DEFAULT_ROLE=${NEXUS_CF_ACCESS_DEFAULT_ROLE:-viewer}
+      - NEXUS_DISABLE_DEMO_ACCOUNTS=${NEXUS_DISABLE_DEMO_ACCOUNTS:-}
+      # Public marketing site on its own subdomain (Host-based routing).
+      - NEXUS_LANDING_HOST=${NEXUS_LANDING_HOST:-}
+      - NEXUS_CONSOLE_URL=${NEXUS_CONSOLE_URL:-}
+      - NEXUS_TRUST_PROXY=1
     # Override the city or disable features:
     #   command: ["--city", "tacoma", "--no-vision"]
-    restart: unless-stopped
+    restart: always
+
+  # Cloudflare Tunnel sidecar — publishes the app at your hostnames with no
+  # inbound ports. Reuses the SAME named tunnel as the non-Docker deployment:
+  # mount the host's ~/.cloudflared (credentials) read-only and use the
+  # repo-tracked docker ingress config (points at the nexus service).
+  # Compose profile "tunnel" so local dev (`docker compose up`) doesn't
+  # require Cloudflare: enable with  docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nexus-tunnel
+    profiles: ["tunnel"]
+    volumes:
+      - ${CLOUDFLARED_DIR:-~/.cloudflared}:/home/nonroot/.cloudflared:ro
+      - ./cloudflared/config-docker.yml:/etc/cloudflared/config.yml:ro
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    depends_on:
+      - nexus
+    restart: always
 
 volumes:
   nexus-data:
