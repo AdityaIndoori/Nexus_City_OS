@@ -3,7 +3,9 @@
 **A decision-intelligence platform for real-time smart-city traffic management
 and incident mitigation. Seattle-first. Extensible to any city on the planet.**
 
-🌐 **Landing page:** https://adityaindoori.github.io/Nexus_City_OS/
+🌐 **Landing page:** https://nexuscity.aindoori.com
+ (mirror: https://adityaindoori.github.io/Nexus_City_OS/ — same page, served
+by GitHub Pages; regenerate with `python platform/scripts/build_pages_mirror.py`)
 
 🔗 **Live demo (running platform):** https://nexus.aindoori.com
  — gated by **Cloudflare Access** (Zero Trust): sign in with your authorized
@@ -53,7 +55,7 @@ hotspots, and incident/plan outcomes from the 7-day SQLite history:
 ## Quick Start (zero install dependencies — Python 3.10+ stdlib only)
 
 ```bash
-# Run the full test suite (124 tests — the safety suite is the trust artifact)
+# Run the full test suite (163 tests — the safety suite is the trust artifact)
 
 python -m unittest discover -s platform/tests -t platform
 
@@ -284,7 +286,8 @@ KMS/HSM.
 | `platform/` | **Reference implementation** |
 | `platform/nexus/` | Platform core (see Architecture below) |
 | `platform/ui/index.html` | Operator Live Grid UI (TOC console) |
-| `platform/tests/` | 124 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed + auto-correlation, congestion estimation + confidence, vision sweep, analytics, multi-city, E2E |
+| `platform/tests/` | 163 automated tests — safety guardrails, mode ladder, live-data fallback, persistence/auth, LLM validation, 911 feed + auto-correlation, congestion estimation + confidence, vision sweep, analytics, multi-city, E2E |
+| `platform/ui/landing.html` | Customer landing page (served at `/landing`, on the marketing subdomain, and mirrored to GitHub Pages via `platform/scripts/build_pages_mirror.py`) |
 | `platform/run.py` | Launcher (`--host/--port/--city/--sim/--no-vision`) |
 | `platform/scripts/live_workflow_demo.py` | Scripted end-to-end mission thread |
 | `Dockerfile` / `docker-compose.yml` | Container deployment (python:3.12-slim, no pip installs) |
@@ -435,7 +438,7 @@ engine, edge, adapter = bootstrap(PortlandAdapter())
 python -m unittest discover -s platform/tests -t platform
 ```
 
-124 tests (network-independent): every MUTCD rule, every hallucination check,
+163 tests (network-independent): every MUTCD rule, every hallucination check,
 911-feed parsing (category/traffic-impact mapping, geo/time filtering,
 degradation),
 911↔incident auto-correlation (traffic dispatch raises/corroborates an
