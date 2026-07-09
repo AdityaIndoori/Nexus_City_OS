@@ -24,26 +24,11 @@ if (-not ([Security.Principal.WindowsPrincipal] `
     Write-Error "Run this script from an ELEVATED PowerShell (task runs as SYSTEM)."
 }
 
-# Startup command: wait for the Docker engine, then compose up.
-# compose runs through cmd /c so its (harmless) stderr progress output
-# doesn't get converted into a PowerShell NativeCommandError -> task rc 1;
-# the task result reflects docker compose's REAL exit code.
-$cmd = @"
-`$deadline = (Get-Date).AddMinutes(5)
-while ((Get-Date) -lt `$deadline) {
-    docker info *> `$null
-    if (`$LASTEXITCODE -eq 0) { break }
-    Start-Sleep -Seconds 10
-}
-Set-Location '$Root'
-cmd /c "docker compose --profile tunnel up -d > `"$Root\docker-autostart.log`" 2>&1"
-exit `$LASTEXITCODE
-"@
-$encoded = [Convert]::ToBase64String(
-    [Text.Encoding]::Unicode.GetBytes($cmd))
-
+# The task runs the dedicated runner script (boot-docker-up.ps1): waits for
+# the Docker engine, runs compose via cmd /c (so docker's stderr progress
+# output cannot become a PowerShell error), exits with compose's real code.
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Root\boot-docker-up.ps1`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $trigger.Delay = "PT30S"          # let networking/Docker service settle
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
