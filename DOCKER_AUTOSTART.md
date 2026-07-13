@@ -1,5 +1,23 @@
 # Dockerized deployment with boot-time (pre-login) autostart on Windows
 
+> **UPDATE 2026-07-13 — tunnel moved out of compose on the primary host.**
+> The Cloudflare tunnel (`nexus-local`) now runs as the **`Cloudflared`
+> Windows service** on the host (config:
+> `C:\Windows\System32\config\systemprofile\.cloudflared\config.yml`,
+> mirrored from `C:\Users\indoo\.cloudflared\config.yml`). The service
+> routes `nexus.aindoori.com` / `nexuscity.aindoori.com` to the container's
+> published host port `127.0.0.1:8757`, plus `ssh.aindoori.com` to host
+> sshd, so the compose `cloudflared` sidecar is **no longer needed here**.
+>
+> **Do NOT run `docker compose --profile tunnel up` on this host.** Two
+> connectors on the same tunnel made Cloudflare load-balance sessions
+> between two different ingress configs, randomly dropping SSH/HTTP
+> connections (broken pipe). The boot task (`boot-docker-up.ps1`) now runs
+> plain `docker compose up -d`. The `tunnel` profile remains available for
+> deploying on a machine that has no other connector for this tunnel. The
+> `--profile tunnel` commands in the rest of this document apply only to
+> such a machine.
+
 How to run the entire Nexus City OS stack — platform + Cloudflare Tunnel —
 as Docker containers that come up **when Windows boots, before anyone signs
 in**. This replaces the Startup-folder launcher (`start-nexus-hidden.vbs`),

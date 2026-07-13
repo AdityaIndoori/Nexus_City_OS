@@ -36,6 +36,13 @@ services:
   # repo-tracked docker ingress config (points at the nexus service).
   # Compose profile "tunnel" so local dev (`docker compose up`) doesn't
   # require Cloudflare: enable with  docker compose --profile tunnel up -d
+  #
+  # !! WARNING (2026-07-13): on the primary Windows host the tunnel already
+  # runs as the "Cloudflared" Windows service. Do NOT enable this profile
+  # there — a second connector on the same tunnel makes Cloudflare
+  # load-balance sessions between two different ingress configs and
+  # randomly drops SSH/HTTP connections (broken pipe). Only use this
+  # profile on machines with no other connector for tunnel nexus-local.
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: nexus-tunnel

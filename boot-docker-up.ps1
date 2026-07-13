@@ -20,7 +20,12 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 10
 }
 Set-Location $Root
-$out = cmd /c "docker compose --profile tunnel up -d 2>&1"
+# NOTE: the "tunnel" profile is intentionally NOT enabled here. The
+# Cloudflare tunnel now runs on the host as the "Cloudflared" Windows
+# service (config: C:\Windows\System32\config\systemprofile\.cloudflared\).
+# Running the compose cloudflared sidecar too would register a SECOND
+# connector on the same tunnel and randomly break SSH/HTTP sessions.
+$out = cmd /c "docker compose up -d 2>&1"
 $rc = $LASTEXITCODE
 "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] compose exit=$rc" | Out-File "$Root\docker-autostart.log" -Encoding ascii
 $out | Out-File "$Root\docker-autostart.log" -Append -Encoding ascii
