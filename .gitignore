@@ -30,5 +30,8 @@ Thumbs.db
 
 # local tooling (screenshot capture)
 shot_tmp/
+
+# generated GRANT sample reports (synthetic demo HTML, regenerate on demand)
+platform/scripts/sample_reports/
 .omo/
 .slim/
