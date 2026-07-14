@@ -30,3 +30,4 @@ Thumbs.db
 
 # local tooling (screenshot capture)
 shot_tmp/
+.omo/
