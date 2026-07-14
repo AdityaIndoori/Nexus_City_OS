@@ -208,6 +208,26 @@ class Store:
         return [{"plan_id": r[0], "status": r[1], "updated_at": r[2]}
                 for r in rows]
 
+    def plan_snapshots(self, since: float = 0.0,
+                       status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Full plan JSON payloads (read-only; evidence engine, ADR-003)."""
+        sql = ("SELECT json, status, updated_at FROM plans "
+               "WHERE updated_at >= ?")
+        args: List[Any] = [since]
+        if status is not None:
+            sql += " AND status = ?"
+            args.append(status)
+        sql += " ORDER BY updated_at"
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            d = json.loads(r[0])
+            d["status"] = r[1]
+            d["updated_at"] = r[2]
+            out.append(d)
+        return out
+
     def plan_outcomes(self) -> Dict[str, int]:
         """Historical outcomes for confidence calibration."""
         with self._lock:
