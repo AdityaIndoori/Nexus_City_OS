@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from .audit import AuditTrail
 from .bus import TelemetryBus
+from .certs import CertificateEngine
 from .copilot import Copilot
 from .graph import CityGraph
 from .store import Store
@@ -85,6 +86,12 @@ class NexusEngine:
         self.audit = AuditTrail(store=store)
         self.copilot = Copilot(self.graph, use_llm=use_llm)
         self.safety = SafetyGate(self.graph)
+        # Certificate engine (ADR-002): per-plan HMAC-signed safety
+        # certificates appended into the audit chain. Store-backed only —
+        # the signing key persists in the Store kv.
+        self.certs: Optional[CertificateEngine] = (
+            CertificateEngine(store, self.audit) if store is not None
+            else None)
         # Governance state survives restarts: a crash must never silently
         # reset the operating mode (a Live deployment that rebooted into
         # Shadow would be safe; the reverse would be catastrophic — so we
@@ -785,6 +792,11 @@ class NexusEngine:
                      (PlanStatus.PENDING_APPROVAL,) else "ok"),
             detail=plan.justification[:300])
         self._persist_plan(plan)
+        if self.certs is not None:
+            try:
+                self.certs.issue(plan, self.safety)
+            except Exception:  # noqa: BLE001 — certs must never break plan flow
+                pass
         self.emit_event("plan")
         return plan
 

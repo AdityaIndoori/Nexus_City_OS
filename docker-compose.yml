@@ -14,6 +14,8 @@ services:
       - WSDOT_ACCESS_CODE=${WSDOT_ACCESS_CODE:-}
       # Congestion-history retention (days); 60+ for Decision Audit pilots.
       - NEXUS_HISTORY_RETENTION_DAYS=${NEXUS_HISTORY_RETENTION_DAYS:-7}
+      # Certificate signing key (ADR-002); empty → Store-generated.
+      - NEXUS_CERT_KEY=${NEXUS_CERT_KEY:-}
       # Optional LLM gateway (AI plans + vision + copilot); deterministic
       # expert system without it.
       - NEXUS_LLM_BASE_URL=${NEXUS_LLM_BASE_URL:-}
