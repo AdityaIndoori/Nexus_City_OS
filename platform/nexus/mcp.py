@@ -216,8 +216,9 @@ def _dispatch_tool(engine: NexusEngine,
         return _err(_INVALID_PARAMS, f"Not found: {exc}", rpc_id)
     except (TypeError, ValueError) as exc:
         return _err(_INVALID_PARAMS, str(exc), rpc_id)
-    except Exception as exc:  # noqa: BLE001
-        return _err(_INTERNAL_ERROR, f"internal: {exc}", rpc_id)
+    except Exception:  # noqa: BLE001
+        # Fixed message — never echo raw exception text to callers.
+        return _err(_INTERNAL_ERROR, "internal error", rpc_id)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +323,8 @@ def _tool_attempt_action(engine: NexusEngine,
 
     # SafetyGate.evaluate() is a pure read (it reads _active_changes and the
     # graph under its own lock; it never writes to engine.plans or the graph).
-    evaluated = engine.safety.evaluate(probe_plan)
+    # record_metrics=False: a probe must not skew the /api/status counters.
+    evaluated = engine.safety.evaluate(probe_plan, record_metrics=False)
 
     passed = evaluated.status.value == "pending_approval"
     violations = []

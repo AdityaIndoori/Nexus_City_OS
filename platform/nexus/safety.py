@@ -284,16 +284,21 @@ class SafetyGate:
 
     # -- the gate --------------------------------------------------------
 
-    def evaluate(self, plan: ActionPlan) -> ActionPlan:
-        with self._lock:
-            self.metrics.generated += 1
+    def evaluate(self, plan: ActionPlan,
+                 record_metrics: bool = True) -> ActionPlan:
+        # record_metrics=False: read-only probes (MCP attempt_action) must
+        # not skew the block-rate counters surfaced on /api/status.
+        if record_metrics:
+            with self._lock:
+                self.metrics.generated += 1
 
         # 1. Provenance (PRD §4.2) — suppressed, never shown to operators.
         if not plan.provenance.is_complete():
             plan.status = PlanStatus.SUPPRESSED_PROVENANCE
             plan.block_reason = "Incomplete provenance (PRD §4.2)."
-            with self._lock:
-                self.metrics.suppressed_provenance += 1
+            if record_metrics:
+                with self._lock:
+                    self.metrics.suppressed_provenance += 1
             return plan
 
         # 2. Hallucination (PRD §4.5)
@@ -301,8 +306,9 @@ class SafetyGate:
         if not h.passed:
             plan.status = PlanStatus.BLOCKED_HALLUCINATION
             plan.block_reason = h.reason()
-            with self._lock:
-                self.metrics.blocked_hallucination += 1
+            if record_metrics:
+                with self._lock:
+                    self.metrics.blocked_hallucination += 1
             return plan
 
         # 3. MUTCD constraints (PRD §4.4)
@@ -310,16 +316,18 @@ class SafetyGate:
         if not c.passed:
             plan.status = PlanStatus.BLOCKED_CONSTRAINT
             plan.block_reason = c.reason()
-            with self._lock:
-                self.metrics.blocked_constraint += 1
+            if record_metrics:
+                with self._lock:
+                    self.metrics.blocked_constraint += 1
             return plan
 
         # 4. Confidence abstention (PRD §4.3)
         if plan.confidence.composite < self.confidence_threshold:
             plan.status = PlanStatus.WITHHELD_CONFIDENCE
             plan.block_reason = ABSTENTION_MESSAGE
-            with self._lock:
-                self.metrics.withheld_confidence += 1
+            if record_metrics:
+                with self._lock:
+                    self.metrics.withheld_confidence += 1
             return plan
 
         plan.status = PlanStatus.PENDING_APPROVAL

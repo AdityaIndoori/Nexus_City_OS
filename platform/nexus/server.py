@@ -53,6 +53,7 @@ from . import bootstrap
 from .adapters import CityAdapter, SeattleLiveAdapter, TacomaAdapter
 from .analytics import Analytics
 from .auth import AuthError, Authenticator
+from .certs import CERT_ACTION
 from .cfaccess import AccessError, CloudflareAccess
 from .congestion import CongestionEstimator
 
@@ -60,7 +61,16 @@ from .roadgeom import RoadGeometry
 from .copilot import InjectionBlocked, RateLimitExceeded
 from .engine import NexusEngine, PermissionDenied
 from .mcp import handle_mcp
-from .models import IncidentType, OperatingMode, Role, now_ts
+from .models import (
+    IncidentType,
+    OperatingMode,
+    Role,
+    SignalPhase,
+    SignalTimingPlan,
+    new_id,
+    now_ts,
+)
+from .rulepacks import RULEPACKS, run_rulepack, rulepack_version
 from .security import (
     IPRateLimiter,
     MAX_BODY_BYTES,
@@ -285,6 +295,35 @@ class PlatformRuntime:
                     len(engine.real_congestion_ids)}
 
 
+def _timing_plan_from_dict(data: Dict[str, Any]) -> SignalTimingPlan:
+    # ADR-005: stateless build from CLIENT-supplied fields only — never
+    # reads the graph. Raises ValueError/TypeError/KeyError on bad shapes;
+    # the endpoint maps those to a fixed 400 message.
+    raw_phases = data["phases"]
+    if not isinstance(raw_phases, list) or not raw_phases:
+        raise ValueError("phases must be a non-empty list")
+    phases = [SignalPhase(
+        phase_id=int(p["phase_id"]),
+        movement=str(p.get("movement", "through")),
+        green_seconds=float(p["green_seconds"]),
+        yellow_seconds=float(p["yellow_seconds"]),
+        red_clearance_seconds=float(p.get("red_clearance_seconds", 0.0)),
+        approach_speed_mph=float(p["approach_speed_mph"]),
+        conflicts_with=[int(c) for c in (p.get("conflicts_with") or [])],
+        grade_pct=float(p.get("grade_pct", 0.0)),
+    ) for p in raw_phases]
+    return SignalTimingPlan(
+        plan_id=new_id("STP"),
+        intersection_id=str(data.get("intersection_id", "")),
+        cycle_seconds=float(data["cycle_seconds"]),
+        phases=phases,
+        pedestrian_walk_seconds=float(data["pedestrian_walk_seconds"]),
+        crosswalk_length_ft=float(data["crosswalk_length_ft"]),
+        near_school_or_senior_center=bool(
+            data.get("near_school_or_senior_center", False)),
+    )
+
+
 def make_handler(runtime: PlatformRuntime):
     engine: NexusEngine = runtime.engine
 
@@ -352,6 +391,7 @@ def make_handler(runtime: PlatformRuntime):
             pass
 
         def _body(self) -> Dict[str, Any]:
+            self._body_malformed = False
             length = int(self.headers.get("Content-Length", 0))
             if length == 0:
                 return {}
@@ -365,6 +405,10 @@ def make_handler(runtime: PlatformRuntime):
                 data = json.loads(raw)
                 return data if isinstance(data, dict) else {}
             except json.JSONDecodeError:
+                # Legacy routes tolerate malformed JSON as {}; the /api/v1
+                # verification endpoints check this flag to return 400
+                # "invalid JSON body" instead (ADR-005).
+                self._body_malformed = True
                 return {}
 
 
@@ -1064,6 +1108,68 @@ def make_handler(runtime: PlatformRuntime):
                     result = engine.copilot.query(
                         user_id, str(body.get("text", "")))
                     self._send_json(result)
+                elif route == "/api/v1/verify":
+                    # Stateless MUTCD lint (ADR-005, C1): rulepack core
+                    # ONLY — never ConstraintVerifier, never graph/engine
+                    # state. Fixed error messages, never exception text.
+                    if self._body_malformed:
+                        self._send_json({"error": "invalid JSON body"}, 400)
+                        return
+                    plan_dict = body.get("plan")
+                    if not isinstance(plan_dict, dict) or not plan_dict:
+                        self._send_json({"error": "missing plan"}, 400)
+                        return
+                    pack_name = str(body.get("rulepack", "mutcd"))
+                    if pack_name not in RULEPACKS:
+                        self._send_json({"error": "unknown rulepack"}, 400)
+                        return
+                    try:
+                        timing_plan = _timing_plan_from_dict(plan_dict)
+                        verdicts = run_rulepack(timing_plan, pack_name)
+                    except (ValueError, TypeError, KeyError,
+                            RecursionError):
+                        self._send_json({"error": "invalid plan"}, 400)
+                        return
+                    failed = [v for v in verdicts if not v["passed"]]
+                    self._send_json({
+                        "verdict": "FAIL" if failed else "PASS",
+                        "rulepack": pack_name,
+                        "rulepack_version": rulepack_version(pack_name),
+                        "violations": failed,
+                        "rules_evaluated": [v["rule_id"] for v in verdicts],
+                    })
+                elif route == "/api/v1/certs/verify":
+                    # Third-party certificate verification (ADR-005/002):
+                    # HMAC signature (current + retired keys) + audit-chain
+                    # membership of the safety_certificate entry.
+                    if self._body_malformed:
+                        self._send_json({"error": "invalid JSON body"}, 400)
+                        return
+                    if not body:
+                        self._send_json({"error": "missing certificate"},
+                                        400)
+                        return
+                    sig_ok = engine.certs is not None and \
+                        engine.certs.verify_certificate(body)
+                    payload = (body.get("after_state", body)
+                               if isinstance(body, dict) else {})
+                    cert_body = payload.get("certificate") \
+                        if isinstance(payload, dict) else None
+                    cert_id = (cert_body or {}).get("cert_id", "")
+                    chain_ok = False
+                    if cert_id and engine.audit.verify_chain():
+                        chain_ok = any(
+                            e["action"] == CERT_ACTION
+                            and e.get("after_state", {})
+                                 .get("certificate", {})
+                                 .get("cert_id") == cert_id
+                            for e in engine.audit.entries(limit=100000))
+                    self._send_json({
+                        "signature_valid": bool(sig_ok),
+                        "chain_member": chain_ok,
+                        "verdict": ("VALID" if sig_ok and chain_ok
+                                    else "INVALID"),
+                    })
                 elif route == "/mcp":
                     # MCP JSON-RPC 2.0 endpoint (ADR-007, M1).
                     # Principal comes from the verified token (above); never

@@ -325,6 +325,18 @@ class TestAttemptAction(unittest.TestCase):
         }, user_id="op-1")
         self.assertIn("note", resp["result"])
 
+    def test_attempt_action_does_not_change_safety_metrics(self):
+        iid = self._first_intersection()
+        before = dict(self.engine.safety.metrics.as_dict())
+        _tool_call(self.engine, "operator", "attempt_action", {
+            "incident_id": "INC-TEST",
+            "targets": [iid],
+            "operations": [self._unsafe_op(iid)],
+            "justification": "metrics guard",
+        }, user_id="op-1")
+        self.assertEqual(self.engine.safety.metrics.as_dict(), before,
+                         "attempt_action probes must not skew SafetyMetrics")
+
     def test_active_change_count_unchanged_after_attempt(self):
         iid = self._first_intersection()
         before = self.engine.safety.verifier.active_change_count()
