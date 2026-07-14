@@ -93,6 +93,10 @@ class SignalPhase:
     red_clearance_seconds: float
     approach_speed_mph: float
     conflicts_with: List[int] = field(default_factory=list)
+    # Approach grade in percent (+uphill / -downhill), feeds the ITE
+    # kinematic yellow-change formula (MUTCD 4D.26 / ITE). MUST stay the
+    # LAST field: SignalTimingPlan.copy() reconstructs positionally.
+    grade_pct: float = 0.0
 
 
 @dataclass
@@ -112,7 +116,8 @@ class SignalTimingPlan:
             cycle_seconds=self.cycle_seconds,
             phases=[SignalPhase(p.phase_id, p.movement, p.green_seconds,
                                 p.yellow_seconds, p.red_clearance_seconds,
-                                p.approach_speed_mph, list(p.conflicts_with))
+                                p.approach_speed_mph, list(p.conflicts_with),
+                                p.grade_pct)
                     for p in self.phases],
             pedestrian_walk_seconds=self.pedestrian_walk_seconds,
             crosswalk_length_ft=self.crosswalk_length_ft,

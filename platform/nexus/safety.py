@@ -15,6 +15,7 @@ Every block is recorded with the violated rule ID so the safety metrics
 """
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -35,8 +36,12 @@ MIN_GREEN_LEFT_S = 4.0             # MUTCD 4D.26
 MIN_PED_WALK_S = 7.0               # MUTCD 4E.06
 PED_WALK_SPEED_FT_S = 3.5          # MUTCD 4E.06
 PED_WALK_SPEED_SLOW_FT_S = 3.0     # near schools / senior centers
-MIN_YELLOW_S = 3.0
-MAX_YELLOW_S = 6.0
+MIN_YELLOW_S = 3.0                 # MUTCD 4D.26 absolute band floor
+MAX_YELLOW_S = 6.0                 # MUTCD 4D.26 absolute band ceiling
+PERCEPTION_REACTION_TIME_S = 1.0   # ITE kinematic yellow-change (ADR-001)
+DECELERATION_RATE_M_S2 = 3.05      # ITE comfortable deceleration rate
+GRAVITY_M_S2 = 9.81
+MPH_TO_M_S = 0.44704
 MIN_CYCLE_S = 60.0
 MAX_CYCLE_S = 180.0
 MIN_PHASE_S = 10.0
@@ -63,6 +68,23 @@ class VerificationResult:
 
     def reason(self) -> str:
         return "; ".join(f"[{v.rule_id}] {v.message}" for v in self.violations)
+
+
+def required_yellow_s(approach_speed_mph: float, grade_pct: float) -> float:
+    # ITE kinematic yellow change: y = t + v / (2*(a + G*g)), floored at the
+    # MUTCD 4D.26 3.0s band minimum (ADR-001). G = grade as a decimal.
+    v_m_s = approach_speed_mph * MPH_TO_M_S
+    # Steep downgrades could zero the denominator; 0.5 m/s² floor guards it.
+    braking = max(0.5, DECELERATION_RATE_M_S2
+                  + (grade_pct / 100.0) * GRAVITY_M_S2)
+    return max(MIN_YELLOW_S, PERCEPTION_REACTION_TIME_S + v_m_s / (2 * braking))
+
+
+def required_fdw_s(crosswalk_length_ft: float, walk_speed_ft_s: float) -> float:
+    # Flashing-don't-walk pedestrian change interval (MUTCD 4E.06): full
+    # crosswalk length at the design walking speed, rounded UP to a whole
+    # second (controllers time in integer seconds; never round down safety).
+    return float(math.ceil(crosswalk_length_ft / walk_speed_ft_s))
 
 
 def apply_operations_to_plan(timing: SignalTimingPlan,
@@ -184,10 +206,7 @@ class ConstraintVerifier:
                 "R5", f"{iid}: cycle {plan.cycle_seconds:.1f}s outside "
                       f"{MIN_CYCLE_S:.0f}–{MAX_CYCLE_S:.0f}s."))
 
-        greens_by_phase: Dict[int, float] = {}
         for phase in plan.phases:
-            greens_by_phase[phase.phase_id] = phase.green_seconds
-
             # R1: minimum green
             min_green = (MIN_GREEN_LEFT_S if phase.movement == "left_turn"
                          else MIN_GREEN_THROUGH_S)
@@ -211,12 +230,22 @@ class ConstraintVerifier:
                         "R5", f"{iid} phase {phase.phase_id}: duration "
                               f"{phase.green_seconds:.1f}s < {MIN_PHASE_S:.0f}s."))
 
-            # R3: yellow change interval
-            if not (MIN_YELLOW_S <= phase.yellow_seconds <= MAX_YELLOW_S):
+            # R3: yellow change interval — ITE kinematic requirement per
+            # phase approach speed + grade (ADR-001), within the MUTCD band.
+            min_yellow = required_yellow_s(phase.approach_speed_mph,
+                                           phase.grade_pct)
+            if phase.yellow_seconds < min_yellow:
                 v.append(Violation(
                     "R3", f"{iid} phase {phase.phase_id}: yellow "
-                          f"{phase.yellow_seconds:.1f}s outside "
-                          f"{MIN_YELLOW_S:.1f}–{MAX_YELLOW_S:.1f}s."))
+                          f"{phase.yellow_seconds:.1f}s < kinematic "
+                          f"requirement {min_yellow:.1f}s "
+                          f"({phase.approach_speed_mph:.0f} mph, "
+                          f"{phase.grade_pct:+.1f}% grade)."))
+            elif phase.yellow_seconds > MAX_YELLOW_S:
+                v.append(Violation(
+                    "R3", f"{iid} phase {phase.phase_id}: yellow "
+                          f"{phase.yellow_seconds:.1f}s > "
+                          f"{MAX_YELLOW_S:.1f}s maximum."))
 
         # R2: pedestrian intervals
         if plan.pedestrian_walk_seconds < MIN_PED_WALK_S:
@@ -227,34 +256,44 @@ class ConstraintVerifier:
         walk_speed = (PED_WALK_SPEED_SLOW_FT_S
                       if plan.near_school_or_senior_center
                       else PED_WALK_SPEED_FT_S)
-        required_clearance = plan.crosswalk_length_ft / walk_speed
-        # Pedestrian clearance happens during green+yellow of the parallel
-        # through phase; require the longest through green to cover it.
-        through_greens = [p.green_seconds for p in plan.phases
-                          if p.movement == "through"]
-        if through_greens and max(through_greens) < required_clearance:
+        fdw = required_fdw_s(plan.crosswalk_length_ft, walk_speed)
+        # WALK + flashing-don't-walk must fit within the parallel through
+        # phase's service window (green + yellow + red clearance, MUTCD 4E.06).
+        through_windows = [p.green_seconds + p.yellow_seconds
+                           + p.red_clearance_seconds
+                           for p in plan.phases if p.movement == "through"]
+        if through_windows and (max(through_windows)
+                                < plan.pedestrian_walk_seconds + fdw):
             v.append(Violation(
-                "R2", f"{iid}: pedestrian clearance needs "
-                      f"{required_clearance:.1f}s "
+                "R2", f"{iid}: pedestrian service needs "
+                      f"{plan.pedestrian_walk_seconds:.1f}s walk + "
+                      f"{fdw:.1f}s FDW "
                       f"({plan.crosswalk_length_ft:.0f}ft at "
-                      f"{walk_speed:.1f}ft/s); max through green is "
-                      f"{max(through_greens):.1f}s."))
+                      f"{walk_speed:.1f}ft/s); max through window is "
+                      f"{max(through_windows):.1f}s."))
 
-        # R4: conflicting simultaneous greens — conflicting phases must not
-        # overlap. In a sequential-phase plan they never run concurrently,
-        # but a degenerate plan where conflicting phases' combined green
-        # exceeds the cycle implies forced overlap.
+        # R4: ring-and-barrier conflict model — phases in each other's
+        # conflicts_with (treated symmetrically) must be sequenceable: their
+        # combined service times (green + yellow + red clearance) must fit
+        # the cycle, otherwise the controller would be forced to run
+        # conflicting greens simultaneously.
+        service_by_phase = {p.phase_id: p.green_seconds + p.yellow_seconds
+                            + p.red_clearance_seconds for p in plan.phases}
+        conflict_pairs: Set[Tuple[int, int]] = set()
         for phase in plan.phases:
             for other_id in phase.conflicts_with:
-                other_green = greens_by_phase.get(other_id)
-                if other_green is None:
-                    continue
-                if phase.green_seconds + other_green > plan.cycle_seconds:
-                    v.append(Violation(
-                        "R4", f"{iid}: phases {phase.phase_id} and {other_id} "
-                              f"conflict and cannot both fit in the "
-                              f"{plan.cycle_seconds:.0f}s cycle without "
-                              f"overlapping greens."))
+                if other_id in service_by_phase:
+                    conflict_pairs.add(
+                        (min(phase.phase_id, other_id),
+                         max(phase.phase_id, other_id)))
+        for a, b in sorted(conflict_pairs):
+            if service_by_phase[a] + service_by_phase[b] > plan.cycle_seconds:
+                v.append(Violation(
+                    "R4", f"{iid}: conflicting phases {a} and {b} need "
+                          f"{service_by_phase[a] + service_by_phase[b]:.1f}s "
+                          f"combined service but the cycle is only "
+                          f"{plan.cycle_seconds:.0f}s — greens would be "
+                          f"forced to overlap."))
         return v
 
 
