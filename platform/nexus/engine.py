@@ -16,6 +16,7 @@ AI copilot, safety gate, simulator, and audit trail. Owns:
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -52,6 +53,10 @@ SPEED_ANOMALY_FRACTION = 0.15           # speed < 15% of limit ⇒ anomaly
 MAX_PLANS_IN_MEMORY = 400
 FRAME_RETENTION_AFTER_RESOLVE_S = 3600.0    # free frozen jpegs after 1 h
 INCIDENT_RETENTION_S = 7 * 86400.0          # drop resolved incidents > 7 d
+# Congestion-history retention (days). Pilots running a 60-day Decision
+# Audit (ADR-003) set NEXUS_HISTORY_RETENTION_DAYS=60 or more.
+HISTORY_RETENTION_DAYS = float(
+    os.environ.get("NEXUS_HISTORY_RETENTION_DAYS", "7").strip() or "7")
 
 # Plans in one of these states are finished — safe to prune from memory.
 _TERMINAL_PLAN_STATUSES = {
@@ -453,8 +458,8 @@ class NexusEngine:
 
     def record_history(self) -> None:
         """Sample monitored intersections' congestion into the store
-        (throttled to once per 60 s; prunes rows older than 7 days once
-        per hour). No-op without a store."""
+        (throttled to once per 60 s; prunes rows older than
+        HISTORY_RETENTION_DAYS once per hour). No-op without a store."""
         if self.store is None:
             return
         now = now_ts()
@@ -468,7 +473,7 @@ class NexusEngine:
             self.store.add_congestion_samples(rows)
             # Prune once per hour (and skip the very first sample cycle).
             if not first_run and int(now) % 3600 < 60:
-                self.store.prune_history(now - 7 * 86400.0)
+                self.store.prune_history(now - HISTORY_RETENTION_DAYS * 86400.0)
         except Exception:  # noqa: BLE001 — history must never break ticks
             pass
         self._prune_incident_memory(now)

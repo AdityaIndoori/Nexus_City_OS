@@ -12,6 +12,8 @@ services:
       # Optional: enables WSDOT loop-detector flow ingestion for the
       # real-congestion estimator (bus-GPS-only without it).
       - WSDOT_ACCESS_CODE=${WSDOT_ACCESS_CODE:-}
+      # Congestion-history retention (days); 60+ for Decision Audit pilots.
+      - NEXUS_HISTORY_RETENTION_DAYS=${NEXUS_HISTORY_RETENTION_DAYS:-7}
       # Optional LLM gateway (AI plans + vision + copilot); deterministic
       # expert system without it.
       - NEXUS_LLM_BASE_URL=${NEXUS_LLM_BASE_URL:-}
