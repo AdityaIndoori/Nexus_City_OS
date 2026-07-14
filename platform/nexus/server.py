@@ -59,6 +59,7 @@ from .congestion import CongestionEstimator
 from .roadgeom import RoadGeometry
 from .copilot import InjectionBlocked, RateLimitExceeded
 from .engine import NexusEngine, PermissionDenied
+from .mcp import handle_mcp
 from .models import IncidentType, OperatingMode, Role, now_ts
 from .security import (
     IPRateLimiter,
@@ -1063,6 +1064,12 @@ def make_handler(runtime: PlatformRuntime):
                     result = engine.copilot.query(
                         user_id, str(body.get("text", "")))
                     self._send_json(result)
+                elif route == "/mcp":
+                    # MCP JSON-RPC 2.0 endpoint (ADR-007, M1).
+                    # Principal comes from the verified token (above); never
+                    # from the request body. Not in PUBLIC_ROUTES — auth required.
+                    response = handle_mcp(engine, principal, body)
+                    self._send_json(response)
                 else:
                     self._send_json({"error": "not found"}, 404)
             except AuthError as exc:
