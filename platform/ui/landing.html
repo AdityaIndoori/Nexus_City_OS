@@ -216,20 +216,22 @@
 <header class="hero">
   <div class="wrap">
     <div class="kicker">Traffic Operations Platform</div>
-    <h1>See every incident. Weigh every option. <em>Sign every decision.</em></h1>
-    <p class="sub">Nexus City OS fuses live traffic cameras, transit GPS, 911
-      dispatch and weather into one operations console — then drafts signal-timing
-      responses that <b>a human operator reviews, approves and can revert</b>.
-      Every action lands in a hash-chained audit log built for public-records
-      scrutiny.</p>
+    <h1>The only traffic AI that knows <em>when to stay quiet.</em></h1>
+    <p class="sub"><b>Every decision verified, certified, and refusable.</b>
+      Nexus City OS fuses live traffic cameras, transit GPS, 911 dispatch and
+      weather into one operations console, then drafts signal-timing responses
+      that <b>a human operator reviews, approves and can revert</b> — each one
+      carrying a signed safety certificate. When a plan would break a rule, the
+      platform withholds it. Every action lands in a hash-chained audit log
+      built for public-records scrutiny.</p>
     <div class="cta">
       <a class="btn hot" href="__CONSOLE_URL__">Launch the live console</a>
       <a class="btn" href="#how">See how it works</a>
     </div>
     <div class="statline mono-host">
-      <div class="st"><b class="mono">&lt; 5 s</b><span>camera-feed freshness target</span></div>
       <div class="st"><b class="mono">6</b><span>live data feeds fused</span></div>
       <div class="st"><b class="mono">100%</b><span>actions require human approval</span></div>
+      <div class="st"><b class="mono">HMAC</b><span>signed certificate per plan</span></div>
       <div class="st"><b class="mono">SHA-256</b><span>hash-chained audit trail</span></div>
     </div>
     <div class="heroshot">
@@ -443,6 +445,45 @@
           SQLite</b>. Tampering breaks the chain visibly; the console verifies
           it continuously.</span></div>
     </div>
+
+    <h2 style="margin-top:72px">Certified, verifiable, refusable — by design.</h2>
+    <p class="lede">The safety gate isn't just internal. Every plan the platform
+      drafts leaves an artifact anyone can check, and the same rulepack is
+      exposed as a service — so a third party can verify our work without
+      trusting our word.</p>
+    <div class="ladder">
+      <div class="rung shadow">
+        <span class="tag">Certify</span>
+        <h4>A signature on every plan</h4>
+        <p>Each drafted plan carries an <b>HMAC-signed safety certificate</b>,
+          embedded in the hash chain before the entry is sealed. The
+          certificate is <b>issuer-verifiable</b>; asymmetric public-key
+          signatures are on the roadmap.</p>
+      </div>
+      <div class="rung advisory">
+        <span class="tag">Verify</span>
+        <h4>Rulepack as an API</h4>
+        <p>A stateless <b>MUTCD rulepack verification API</b> takes a timing
+          plan and returns per-rule R1–R5 pass/fail — plus a certificate-verify
+          endpoint that confirms any Nexus-issued cert's signature and chain
+          membership. Authenticated, no city graph required.</p>
+      </div>
+      <div class="rung live">
+        <span class="tag">Refuse</span>
+        <h4>Read-only, and it says no</h4>
+        <p>A read-only <b>MCP endpoint</b> lets an AI assistant query incidents,
+          plans and the audit trail. Ask it to <b>act</b> and it returns a
+          structured safety refusal — <b>no mutation path exists</b>.</p>
+      </div>
+    </div>
+
+    <p class="lede" style="margin-top:40px; margin-bottom:0">The pilot ships a
+      <b>counterfactual Decision Audit</b> — evidence of what the AI would have
+      done in Shadow mode versus what your operators did — and a
+      <b>NIST AI RMF critical-infrastructure conformity pack</b>. Road-traffic
+      AI is classified high-risk under <b>EU AI Act Annex III(2)</b> (obligations
+      from December 2027); EU Annex IV technical documentation is a documented
+      roadmap item, not a built feature today.</p>
   </div>
 </section>
 
@@ -539,6 +580,26 @@
           detection-time evidence tied to specific incidents, then released from
           memory on a retention schedule. There is no face or plate recognition
           anywhere in the pipeline.</div>
+      </details>
+      <details>
+        <summary>Can a third party verify a plan without trusting you?</summary>
+        <div class="a">Yes. Every drafted plan carries an <b>HMAC-signed
+          certificate</b> embedded in the hash chain, and a stateless
+          verification API returns per-rule MUTCD R1–R5 results for any submitted
+          timing plan plus a certificate-verify endpoint that confirms a cert's
+          signature and chain membership. The signatures are <b>issuer-verifiable
+          (symmetric HMAC)</b> today; asymmetric public-key signatures are on the
+          roadmap, and we say so plainly.</div>
+      </details>
+      <details>
+        <summary>What can an AI assistant actually do through the platform?</summary>
+        <div class="a">The <b>MCP endpoint is read-only</b>. An assistant can
+          query incidents, plans and the audit trail (subject to role), but any
+          attempt to <b>act</b> returns a structured safety refusal — there is no
+          mutation path behind it. This is the honest core of the product today:
+          verification, provenance and abstention. <b>Verified AI actuation is a
+          roadmap slide</b>, and a read-only NTCIP 1202 controller bridge is its
+          credible first step — not something the pilot executes.</div>
       </details>
       <details>
         <summary>Our signals aren’t in Seattle. How does onboarding work?</summary>

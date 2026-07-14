@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus City OS — Pricing &amp; Packaging</title>
+<meta name="description" content="Nexus City OS pricing: a 60-day Decision Audit shadow pilot, an advisory tier, and a per-verification API. Non-executing today; verified actuation is roadmap.">
+<style>
+  :root{
+    --bg:#121417; --panel:#191C20; --panel2:#20242A; --line:#2E333A;
+    --ink:#E8EAED; --dim:#98A1AB;
+    --orange:#FF4F00; --yellow:#F7B500; --green:#00843D;
+    --green-t:#3BB273; --blue:#7FA6C9;
+    --mono:Consolas,"Cascadia Mono","Courier New",monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; border-radius:0;}
+  body{background:var(--bg); color:var(--ink);
+       font:15px/1.6 "Segoe UI",system-ui,sans-serif;}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  ::selection{background:var(--orange); color:#fff;}
+
+  .sheet{max-width:900px; margin:0 auto; padding:40px 32px 56px;}
+
+  /* masthead */
+  .mast{display:flex; align-items:flex-end; justify-content:space-between;
+        gap:24px; border-bottom:2px solid var(--line); padding-bottom:16px;
+        margin-bottom:8px;}
+  .wordmark{font-size:18px; font-weight:700; letter-spacing:1px; color:var(--ink);}
+  .wordmark span{color:var(--orange);}
+  .doctag{font-family:var(--mono); font-size:11px; letter-spacing:1.5px;
+          text-transform:uppercase; color:var(--dim); text-align:right;}
+  .doctag b{display:block; color:var(--yellow); font-size:13px;
+            letter-spacing:2px;}
+
+  h1{font-size:26px; line-height:1.18; font-weight:700; letter-spacing:-.3px;
+     margin:20px 0 6px; max-width:640px;}
+  h1 em{font-style:normal; color:var(--dim);}
+  .oneliner{font-family:var(--mono); font-size:12px; color:var(--orange);
+            letter-spacing:1px; margin-bottom:18px;}
+  .intro{color:var(--dim); font-size:14px; max-width:660px; margin-bottom:28px;}
+  .intro b{color:var(--ink); font-weight:600;}
+
+  .seclabel{font-family:var(--mono); font-size:11px; letter-spacing:2px;
+            text-transform:uppercase; color:var(--yellow); margin:0 0 12px;}
+  .seclabel::before{content:""; display:inline-block; width:10px; height:10px;
+                    background:var(--yellow); margin-right:10px; vertical-align:-1px;}
+
+  /* pricing tiers */
+  .tiers{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;
+         margin-bottom:12px;}
+  .tier{background:var(--panel); border:1px solid var(--line);
+        border-top:3px solid var(--line); display:flex; flex-direction:column;}
+  .tier:nth-child(1){border-top-color:var(--orange);}
+  .tier:nth-child(2){border-top-color:var(--yellow);}
+  .tier:nth-child(3){border-top-color:var(--blue);}
+  .tier .thd{padding:16px 18px 8px;}
+  .tier .kick{font-family:var(--mono); font-size:11px; letter-spacing:1px;
+              text-transform:uppercase; color:var(--dim); margin-bottom:6px;}
+  .tier h3{font-size:17px; font-weight:700; margin-bottom:8px;}
+  .tier .price{font-family:var(--mono); font-size:20px; color:var(--ink);
+               line-height:1.2;}
+  .tier .price small{display:block; font-size:11px; color:var(--dim);
+                     letter-spacing:.5px; margin-top:4px; font-family:"Segoe UI",sans-serif;}
+  .tier ul{list-style:none; padding:10px 18px 16px; margin-top:auto; flex:1;}
+  .tier li{font-size:12.5px; color:var(--dim); padding:5px 0 5px 18px;
+           position:relative; border-bottom:1px dotted var(--line);}
+  .tier li:last-child{border-bottom:none;}
+  .tier li::before{content:"—"; position:absolute; left:0; color:var(--orange);
+                   font-family:var(--mono);}
+  .tier li b{color:var(--ink); font-weight:600;}
+  .tier .foot{font-size:11px; color:var(--dim); padding:0 18px 16px;
+              font-family:var(--mono);}
+
+  .procure{border:1px solid var(--line); background:var(--panel);
+           padding:14px 18px; margin-bottom:28px; font-size:13px;
+           color:var(--dim);}
+  .procure b{color:var(--ink); font-weight:600;}
+  .procure .mono{color:var(--green-t);}
+
+  /* deliverables table */
+  table{width:100%; border-collapse:collapse; border:1px solid var(--line);
+        background:var(--panel); font-size:13px; margin-bottom:28px;}
+  th{font-family:var(--mono); font-size:10.5px; letter-spacing:1px;
+     text-transform:uppercase; color:var(--dim); text-align:left;
+     padding:10px 14px; border-bottom:2px solid var(--line);}
+  td{padding:10px 14px; border-bottom:1px solid var(--line); color:var(--dim);
+     vertical-align:top;}
+  td:first-child{color:var(--ink); font-weight:600;}
+  tr:last-child td{border-bottom:none;}
+  .yes{color:var(--green-t); font-family:var(--mono); font-weight:700;}
+  .road{color:var(--yellow); font-family:var(--mono);}
+
+  /* honesty box */
+  .honest{border:1px solid var(--line); border-left:3px solid var(--orange);
+          background:var(--panel); padding:16px 20px; margin-bottom:24px;}
+  .honest h4{font-size:13px; font-family:var(--mono); letter-spacing:1px;
+             text-transform:uppercase; color:var(--orange); margin-bottom:8px;}
+  .honest p{font-size:13px; color:var(--dim); margin-bottom:6px;}
+  .honest p:last-child{margin-bottom:0;}
+  .honest b{color:var(--ink); font-weight:600;}
+
+  .foot-note{border-top:2px solid var(--line); padding-top:14px;
+             font-family:var(--mono); font-size:11px; color:var(--dim);
+             display:flex; justify-content:space-between; gap:16px;
+             flex-wrap:wrap;}
+
+  @media (max-width:760px){
+    .tiers{grid-template-columns:1fr;}
+    table{display:block; overflow-x:auto;}
+  }
+
+  @media print{
+    @page{margin:14mm;}
+    :root{
+      --bg:#fff; --panel:#fff; --panel2:#fff; --line:#c9ccd1;
+      --ink:#111; --dim:#444;
+    }
+    body{background:#fff; color:#111; font-size:10.5pt;}
+    .sheet{max-width:none; margin:0; padding:0;}
+    h1{font-size:18pt;}
+    .tier .price{font-size:15pt;}
+    .tier, .procure, .honest, table, .close{break-inside:avoid;}
+    .tiers{gap:8px;}
+    a{color:#111; text-decoration:none;}
+    .heroshot,.no-print{display:none;}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="mast">
+    <span class="wordmark">NEXUS <span>CITY OS</span></span>
+    <div class="doctag">Pricing &amp; Packaging<b>PILOT PROGRAM</b></div>
+  </div>
+
+  <h1>Buy the proof before you buy the platform. <em>Start in shadow.</em></h1>
+  <div class="oneliner">The only traffic AI that knows when to stay quiet.</div>
+  <p class="intro">Nexus City OS runs the identical detection and
+    recommendation pipeline in <b>Shadow</b> and <b>Advisory</b> modes without
+    ever touching a signal. The pilot is priced to clear inside a department's
+    discretionary spend — a <b>60-day Decision Audit</b> that ends with a signed
+    evidence report you can take to a grant office, a council, or an
+    after-action review. No hardware. No RFP. No operational risk.</p>
+
+  <div class="seclabel">Three ways to start</div>
+  <div class="tiers">
+
+    <div class="tier">
+      <div class="thd">
+        <div class="kick">Tier 01 · Fixed-fee</div>
+        <h3>60-Day Decision Audit</h3>
+        <div class="price">$10K–$100K<small>flat, per city · 60-day shadow pilot</small></div>
+      </div>
+      <ul>
+        <li><b>Shadow deployment</b> on your live feeds — logs every would-be plan, <b>never executes</b></li>
+        <li><b>HMAC-signed safety certificate</b> on every plan the platform drafts</li>
+        <li><b>Decision Audit report</b>: counterfactual evidence of what the AI would have done vs. what your operators did</li>
+        <li><b>SS4A / SMART grant packet</b> — print-ready evidence exhibit</li>
+        <li><b>NIST AI RMF</b> critical-infrastructure conformity pack</li>
+        <li>Hash-chained audit trail, exportable for public records</li>
+      </ul>
+      <div class="foot">DELIVERABLE: signed report + certs</div>
+    </div>
+
+    <div class="tier">
+      <div class="thd">
+        <div class="kick">Tier 02 · Subscription</div>
+        <h3>Advisory Operations</h3>
+        <div class="price">Annual<small>per city · quoted after pilot</small></div>
+      </div>
+      <ul>
+        <li>Everything in the Decision Audit, running continuously</li>
+        <li><b>Advisory mode</b>: approvals issue a formatted instruction to signal staff — <b>people still turn the keys</b></li>
+        <li>Live operator console, SSE push, role-based access</li>
+        <li>Rolling certificates + quarterly Decision Audit refresh</li>
+        <li>Continued NIST AI RMF conformity evidence</li>
+        <li>New-city onboarding via the adapter SDK</li>
+      </ul>
+      <div class="foot">NON-EXECUTING · advisory only</div>
+    </div>
+
+    <div class="tier">
+      <div class="thd">
+        <div class="kick">Tier 03 · Metered</div>
+        <h3>Verification API</h3>
+        <div class="price">Per-verification<small>metered · volume tiers</small></div>
+      </div>
+      <ul>
+        <li>Stateless <b>MUTCD rulepack</b> check: submit a timing plan, get per-rule R1–R5 pass/fail</li>
+        <li><b>Certificate verification</b> endpoint — confirm any Nexus-issued cert's HMAC + chain membership</li>
+        <li>Read-only <b>MCP endpoint</b>: query incidents, plans and audit; unsafe actions are <b>refused</b>, not executed</li>
+        <li>Authenticated (bearer token); no city graph required</li>
+        <li>For agencies, integrators and third-party auditors</li>
+      </ul>
+      <div class="foot">READ-ONLY · issuer-verifiable HMAC</div>
+    </div>
+
+  </div>
+
+  <div class="procure">
+    <b>Procurement path:</b> the Decision Audit is deliberately scoped to the
+    <span class="mono">$10K–$100K micro-purchase / informal-quote band</span> —
+    payable on a department P-card or a single informal quote, bypassing the
+    full competitive RFP cycle. It is a fixed-fee professional service, not a
+    hardware capital purchase. Reseller / cooperative-contract paths are a
+    roadmap option, not a claim today.
+  </div>
+
+  <div class="seclabel">What each certificate and pack contains</div>
+  <table>
+    <tr><th>Artifact</th><th>What it is</th><th>Audit</th><th>Advisory</th><th>API</th></tr>
+    <tr><td>Signed safety certificate</td>
+        <td>HMAC-signed record — issuer-verifiable — embedded in the hash chain on every drafted plan</td>
+        <td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓ verify</td></tr>
+    <tr><td>Decision Audit report</td>
+        <td>Counterfactual evidence: plans logged, certified, refused, abstained; matched before/after windows; honest "directional signal, not ground truth" framing</td>
+        <td class="yes">✓</td><td class="yes">✓</td><td>—</td></tr>
+    <tr><td>SS4A / SMART grant packet</td>
+        <td>Print-ready HTML exhibit mapping shadow evidence to grant safety-benefit language</td>
+        <td class="yes">✓</td><td class="yes">✓</td><td>—</td></tr>
+    <tr><td>NIST AI RMF conformity pack</td>
+        <td>Critical-infrastructure-profile template evidencing GOVERN / MAP / MEASURE / MANAGE controls</td>
+        <td class="yes">✓</td><td class="yes">✓</td><td>—</td></tr>
+    <tr><td>Verification API access</td>
+        <td>Stateless rulepack lint + cert-verify + read-only MCP query</td>
+        <td>—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+    <tr><td>EU AI Act Annex IV pack</td>
+        <td>Technical-documentation template for high-risk road-traffic AI</td>
+        <td class="road">roadmap</td><td class="road">roadmap</td><td class="road">roadmap</td></tr>
+  </table>
+
+  <div class="honest">
+    <h4>What you are and aren't buying</h4>
+    <p><b>Shadow and Advisory tiers are non-executing.</b> The platform logs
+      and instructs; it does not actuate a single signal. There is no code path
+      that changes signal timing without a human turning the keys.</p>
+    <p><b>Verified actuation is roadmap.</b> A read-only NTCIP 1202 controller
+      bridge is the credible first step; a live-execution path does not exist in
+      the pilot and we do not price one.</p>
+    <p><b>Certificates are issuer-verifiable (symmetric HMAC).</b> Third parties
+      can confirm integrity and chain membership through the Verification API;
+      asymmetric public-key signatures are a documented roadmap item.</p>
+    <p><b>No deployed customers yet.</b> The live Seattle instance is a running
+      reference demo — not a paying municipal deployment. We will not imply
+      otherwise.</p>
+  </div>
+
+  <div class="foot-note">
+    <span>NEXUS CITY OS · Pricing indicative — final quote per city scope</span>
+    <span>github.com/AdityaIndoori/Nexus_City_OS</span>
+  </div>
+
+</div>
+</body>
+</html>

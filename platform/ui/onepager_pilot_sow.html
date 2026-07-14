@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus City OS — 60-Day Shadow Pilot · Statement of Work</title>
+<meta name="description" content="Statement of Work outline for the Nexus City OS 60-day Decision Audit shadow pilot: zero hardware, zero operational risk, PII-redacted data, deliverables, timeline and exit criteria.">
+<style>
+  :root{
+    --bg:#121417; --panel:#191C20; --panel2:#20242A; --line:#2E333A;
+    --ink:#E8EAED; --dim:#98A1AB;
+    --orange:#FF4F00; --yellow:#F7B500; --green:#00843D;
+    --green-t:#3BB273; --blue:#7FA6C9;
+    --mono:Consolas,"Cascadia Mono","Courier New",monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; border-radius:0;}
+  body{background:var(--bg); color:var(--ink);
+       font:15px/1.6 "Segoe UI",system-ui,sans-serif;}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  ::selection{background:var(--orange); color:#fff;}
+
+  .sheet{max-width:900px; margin:0 auto; padding:40px 32px 56px;}
+
+  .mast{display:flex; align-items:flex-end; justify-content:space-between;
+        gap:24px; border-bottom:2px solid var(--line); padding-bottom:16px;
+        margin-bottom:8px;}
+  .wordmark{font-size:18px; font-weight:700; letter-spacing:1px; color:var(--ink);}
+  .wordmark span{color:var(--orange);}
+  .doctag{font-family:var(--mono); font-size:11px; letter-spacing:1.5px;
+          text-transform:uppercase; color:var(--dim); text-align:right;}
+  .doctag b{display:block; color:var(--yellow); font-size:13px; letter-spacing:2px;}
+
+  h1{font-size:26px; line-height:1.18; font-weight:700; letter-spacing:-.3px;
+     margin:20px 0 6px; max-width:660px;}
+  h1 em{font-style:normal; color:var(--dim);}
+  .oneliner{font-family:var(--mono); font-size:12px; color:var(--orange);
+            letter-spacing:1px; margin-bottom:18px;}
+  .intro{color:var(--dim); font-size:14px; max-width:680px; margin-bottom:28px;}
+  .intro b{color:var(--ink); font-weight:600;}
+
+  .seclabel{font-family:var(--mono); font-size:11px; letter-spacing:2px;
+            text-transform:uppercase; color:var(--yellow); margin:28px 0 12px;}
+  .seclabel::before{content:""; display:inline-block; width:10px; height:10px;
+                    background:var(--yellow); margin-right:10px; vertical-align:-1px;}
+  .seclabel:first-of-type{margin-top:0;}
+
+  /* scope grid */
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px;
+         margin-bottom:8px;}
+  .card{background:var(--panel); border:1px solid var(--line); padding:16px 18px;}
+  .card.in{border-left:3px solid var(--green);}
+  .card.out{border-left:3px solid var(--orange);}
+  .card h3{font-size:14px; font-family:var(--mono); letter-spacing:1px;
+           text-transform:uppercase; margin-bottom:10px;}
+  .card.in h3{color:var(--green-t);}
+  .card.out h3{color:var(--orange);}
+  .card ul{list-style:none;}
+  .card li{font-size:13px; color:var(--dim); padding:5px 0 5px 18px;
+           position:relative; border-bottom:1px dotted var(--line);}
+  .card li:last-child{border-bottom:none;}
+  .card.in li::before{content:"✓"; position:absolute; left:0; color:var(--green-t);
+                      font-family:var(--mono);}
+  .card.out li::before{content:"✕"; position:absolute; left:0; color:var(--orange);
+                       font-family:var(--mono);}
+  .card li b{color:var(--ink); font-weight:600;}
+
+  /* data table */
+  table{width:100%; border-collapse:collapse; border:1px solid var(--line);
+        background:var(--panel); font-size:13px; margin-bottom:8px;}
+  th{font-family:var(--mono); font-size:10.5px; letter-spacing:1px;
+     text-transform:uppercase; color:var(--dim); text-align:left;
+     padding:10px 14px; border-bottom:2px solid var(--line);}
+  td{padding:10px 14px; border-bottom:1px solid var(--line); color:var(--dim);
+     vertical-align:top;}
+  td:first-child{color:var(--ink); font-weight:600; white-space:nowrap;}
+  tr:last-child td{border-bottom:none;}
+
+  /* timeline */
+  .tl{border:1px solid var(--line); background:var(--panel);}
+  .tl-row{display:grid; grid-template-columns:110px 1fr; gap:16px;
+          padding:12px 18px; border-bottom:1px solid var(--line);}
+  .tl-row:last-child{border-bottom:none;}
+  .tl-row .wk{font-family:var(--mono); font-size:12px; font-weight:700;
+              color:var(--yellow); letter-spacing:.5px;}
+  .tl-row .ph{font-size:13px; color:var(--dim);}
+  .tl-row .ph b{color:var(--ink); font-weight:600; display:block;
+                margin-bottom:2px;}
+
+  /* deliverables + exit */
+  .list{border:1px solid var(--line); background:var(--panel);}
+  .list .item{display:grid; grid-template-columns:26px 1fr; gap:12px;
+              padding:11px 18px; border-bottom:1px solid var(--line);
+              font-size:13px; color:var(--dim);}
+  .list .item:last-child{border-bottom:none;}
+  .list .n{font-family:var(--mono); color:var(--orange); font-weight:700;}
+  .list .item b{color:var(--ink); font-weight:600;}
+
+  .honest{border:1px solid var(--line); border-left:3px solid var(--orange);
+          background:var(--panel); padding:16px 20px; margin-top:28px;}
+  .honest h4{font-size:13px; font-family:var(--mono); letter-spacing:1px;
+             text-transform:uppercase; color:var(--orange); margin-bottom:8px;}
+  .honest p{font-size:13px; color:var(--dim); margin-bottom:6px;}
+  .honest p:last-child{margin-bottom:0;}
+  .honest b{color:var(--ink); font-weight:600;}
+
+  .foot-note{border-top:2px solid var(--line); padding-top:14px; margin-top:28px;
+             font-family:var(--mono); font-size:11px; color:var(--dim);
+             display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;}
+
+  @media (max-width:760px){
+    .grid2{grid-template-columns:1fr;}
+    .tl-row{grid-template-columns:1fr; gap:2px;}
+    table{display:block; overflow-x:auto;}
+    td:first-child{white-space:normal;}
+  }
+
+  @media print{
+    @page{margin:14mm;}
+    :root{
+      --bg:#fff; --panel:#fff; --panel2:#fff; --line:#c9ccd1;
+      --ink:#111; --dim:#444;
+    }
+    body{background:#fff; color:#111; font-size:10pt;}
+    .sheet{max-width:none; margin:0; padding:0;}
+    h1{font-size:17pt;}
+    .card,.tl,.list,table,.honest,.tl-row{break-inside:avoid;}
+    .grid2{gap:8px;}
+    a{color:#111; text-decoration:none;}
+    .no-print{display:none;}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="mast">
+    <span class="wordmark">NEXUS <span>CITY OS</span></span>
+    <div class="doctag">Statement of Work · Outline<b>60-DAY SHADOW PILOT</b></div>
+  </div>
+
+  <h1>A 60-day Decision Audit. Zero hardware, zero risk. <em>It never turns a key.</em></h1>
+  <div class="oneliner">Every decision verified, certified, and refusable.</div>
+  <p class="intro">This outline scopes a fixed-fee, <b>60-day shadow
+    deployment</b> of Nexus City OS against your city's live public feeds. The
+    platform runs its full detection and recommendation pipeline in
+    <b>Shadow mode</b> — it logs every would-be signal-timing plan and signs a
+    safety certificate for each, but <b>executes nothing</b>. At the end you
+    receive a signed Decision Audit report: counterfactual evidence of what the
+    AI would have recommended, versus what actually happened.</p>
+
+  <div class="seclabel">Scope</div>
+  <div class="grid2">
+    <div class="card in">
+      <h3>In scope</h3>
+      <ul>
+        <li><b>Software-only deployment</b> on one machine in the TOC (or a container host)</li>
+        <li>Adapter onboarding to your existing camera, transit, dispatch and weather feeds</li>
+        <li><b>Shadow-mode capture</b>: would-be plans logged &amp; certified, never executed</li>
+        <li>Operator console access (read + acknowledge + notes) for your staff</li>
+        <li>HMAC-signed safety certificate on every drafted plan</li>
+        <li>Decision Audit report + grant / NIST AI RMF packs at exit</li>
+      </ul>
+    </div>
+    <div class="card out">
+      <h3>Out of scope</h3>
+      <ul>
+        <li><b>No hardware install</b> — no controllers, cabinets, sensors or cameras purchased or touched</li>
+        <li><b>No signal actuation</b> — there is no code path to change timing in Shadow mode</li>
+        <li>No integration with the physical signal controller network</li>
+        <li>No raw video ingestion or storage; no face / plate recognition</li>
+        <li>No licensed third-party probe data (zero external API keys required)</li>
+        <li>Live-execution and NTCIP controller bridge — <b>roadmap, not this pilot</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="seclabel">Data handled</div>
+  <table>
+    <tr><th>Data</th><th>Handling</th></tr>
+    <tr><td>Camera frames</td>
+        <td>Analyzed at the edge for incident detection; <b>redacted before ingestion</b> — unredacted telemetry is rejected and the rejection is audit-logged. Frames kept as detection-time evidence tied to a specific incident, released on a retention schedule. No raw video enters the platform.</td></tr>
+    <tr><td>Transit GPS</td>
+        <td>Public GTFS-RT vehicle positions used as anonymous congestion probes. No rider data.</td></tr>
+    <tr><td>911 dispatch</td>
+        <td>Public real-time feed for the emergency layer. <b>Street addresses are redacted from shareable reports</b> — aggregate counts and role labels only; full per-incident detail stays in the access-gated legal export.</td></tr>
+    <tr><td>Operator decisions</td>
+        <td>Approve / reject labels recorded by <b>role</b>, keyed to plan ID — never operator email. Operator notes never appear in shareable reports.</td></tr>
+    <tr><td>Weather / hazard</td>
+        <td>Public NWS feeds; recorded in each plan's provenance. No PII.</td></tr>
+  </table>
+
+  <div class="seclabel">Timeline &amp; deliverables</div>
+  <div class="tl">
+    <div class="tl-row">
+      <span class="wk">WEEK 1</span>
+      <span class="ph"><b>Adapter onboarding</b>Map your city's feeds onto the platform's city graph via the adapter SDK. Stand up the shadow instance; verify feeds and the hash-chained audit trail. No hardware, no downtime.</span>
+    </div>
+    <div class="tl-row">
+      <span class="wk">WEEKS 2–9</span>
+      <span class="ph"><b>Shadow capture</b>The platform runs continuously in Shadow mode: detects incidents, drafts signal-timing plans, runs the safety gate, signs a certificate per plan, and logs everything. Your operators use the console read-only. History retention is set to the full pilot window (60/90 days) so nothing is pruned.</span>
+    </div>
+    <div class="tl-row">
+      <span class="wk">WEEK 9+</span>
+      <span class="ph"><b>Decision Audit report</b>Delivery of the signed evidence report — plans logged / certified / refused / abstained, matched before/after congestion windows, chain-verification proof — plus the SS4A/SMART grant packet and the NIST AI RMF conformity pack.</span>
+    </div>
+  </div>
+
+  <div class="seclabel">Exit criteria</div>
+  <div class="list">
+    <div class="item"><span class="n">1</span><span><b>Signed Decision Audit report delivered</b> — counterfactual evidence with methodology stated inline ("directional signal, not ground truth"), honest about the capture start date.</span></div>
+    <div class="item"><span class="n">2</span><span><b>Audit chain verifies intact</b> — every governance event hash-chained end to end; verification proof included in the report.</span></div>
+    <div class="item"><span class="n">3</span><span><b>Every drafted plan carries a valid, issuer-verifiable certificate</b> — confirmable through the Verification API.</span></div>
+    <div class="item"><span class="n">4</span><span><b>Grant + NIST AI RMF packs delivered</b> — print-ready HTML exhibits.</span></div>
+    <div class="item"><span class="n">5</span><span><b>Zero signal actuations occurred</b> — provable from the audit trail; Shadow mode never executed.</span></div>
+    <div class="item"><span class="n">6</span><span><b>Go / no-go decision</b> — the city decides whether Advisory mode earns its place. Clean teardown at any time; the city keeps all exported evidence.</span></div>
+  </div>
+
+  <div class="honest">
+    <h4>Risk posture — read this</h4>
+    <p><b>Operational risk is structurally zero.</b> Shadow mode has no
+      code path that touches signal hardware. The platform observes, drafts and
+      certifies; it does not act. Human operators remain the only actuators of
+      the physical network throughout.</p>
+    <p><b>Deployment is boring by design.</b> One Python standard-library
+      process with a local SQLite store — no message broker, no container fleet,
+      no external database. It survives restarts with its mode, incidents and
+      audit chain intact.</p>
+    <p><b>This is a first pilot.</b> The live Seattle instance is a running
+      reference demo, not a paying deployment. We will not represent deployed
+      cities that do not exist.</p>
+  </div>
+
+  <div class="foot-note">
+    <span>NEXUS CITY OS · SOW outline — final terms per engagement</span>
+    <span>github.com/AdityaIndoori/Nexus_City_OS</span>
+  </div>
+
+</div>
+</body>
+</html>
