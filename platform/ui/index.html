@@ -121,6 +121,13 @@
   #msresults .msrow .k{color:var(--dim); font-size:9px;
     text-transform:uppercase; margin-left:auto; font-family:var(--mono);
     white-space:nowrap; flex:0 0 auto;}
+  #msresults .msrow .lbl{overflow:hidden; min-width:0;}
+  #msresults .msrow .lbl .l1{overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; display:block;}
+  #msresults .msrow .lbl .l2{overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; display:block; color:var(--dim); font-size:10px;}
+  #msresults .msnote{padding:6px 8px; font-size:11px; color:var(--dim);
+    font-family:var(--mono);}
 
   /* -------- buttons: physical, blocky ------------------------------- */
   button{background:var(--panel2); color:var(--ink);
@@ -590,7 +597,7 @@
     <h2>Live Grid — Seattle <span id="weatherline" class="mono" style="float:right;text-transform:none;letter-spacing:0"></span></h2>
     <div id="map" role="application" aria-label="Seattle live traffic map"></div>
     <div id="mapsearch">
-      <input id="msinput" placeholder="⌕ Search intersections, cameras, 911 addresses, places…"
+      <input id="msinput" placeholder="⌕ Search addresses, places, ZIP codes, intersections, coordinates…"
              autocomplete="off" aria-label="Search the map">
       <div id="msresults" role="listbox"></div>
     </div>
@@ -2874,44 +2881,87 @@ document.addEventListener("keydown", e=>{
     e.preventDefault(); gAck(firstDetected.id); }
 });
 
-/* ---------- map place search (zero-dependency) --------------------------
-   Client-side fuzzy search over intersections + live cameras + 911
-   addresses. Falls back to OpenStreetMap Nominatim (HTTPS, allowed by
-   CSP connect-src) for arbitrary Seattle-area addresses/places. */
+/* ---------- map place search (Google-grade, zero-dependency) ------------
+   One field accepts: intersections / cameras / 911 dispatches (local,
+   token-ranked), street addresses, place & business names, ZIP codes,
+   neighborhoods & cities, and raw coordinates ("47.61, -122.33",
+   "47.6062 N 122.3321 W"). Geocoding: OpenStreetMap Nominatim, BIASED to
+   the city viewbox but NOT bounded — anything findable on
+   openstreetmap.org is findable here. Reliability: AbortController per
+   keystroke, sequence guard, one auto-retry on a busy geocoder, Enter
+   forces an immediate geocode, status rows for searching / no-match. */
 let msTimer = null, msResults = [], msSel = -1, msNomSeq = 0;
+let msAbort = null, msPendingNote = "";
+const MS_VIEWBOX = "-122.46,47.75,-122.22,47.48";   // bias, not bound
+
+// "47.61, -122.33" · "47.6062 -122.3321" · "47.6062 N, 122.3321 W"
+function msParseCoords(q){
+  const m = q.trim().match(
+    /^(-?\d{1,2}(?:\.\d+)?)\s*°?\s*([NSns])?\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*°?\s*([EWew])?$/);
+  if(!m) return null;
+  let lat = parseFloat(m[1]), lon = parseFloat(m[3]);
+  if(m[2] && m[2].toUpperCase()==="S") lat = -Math.abs(lat);
+  if(m[4] && m[4].toUpperCase()==="W") lon = -Math.abs(lon);
+  if(!Number.isFinite(lat) || !Number.isFinite(lon)
+     || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return {lat, lon};
+}
+
+// Ranked local match: every whitespace token must appear somewhere;
+// prefix and word-boundary hits score higher, so "5th pine" finds
+// "5th Ave & Pine St" and "pine 1st" finds "1st Ave & Pine St".
+function msScore(hay, tokens){
+  const h = hay.toLowerCase();
+  let score = 0;
+  for(const t of tokens){
+    const idx = h.indexOf(t);
+    if(idx === -1) return -1;
+    score += (idx === 0 ? 30 : 10) - Math.min(idx, 9);
+    if(idx > 0 && /[ &·/-]/.test(h[idx-1])) score += 8;   // word boundary
+  }
+  return score - Math.min(h.length/40, 5);
+}
 function msLocalSearch(q){
-  const ql = q.toLowerCase();
+  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if(!tokens.length) return [];
   const out = [];
   (grid?.intersections||[]).forEach(i=>{
-    if(i.name.toLowerCase().includes(ql))
-      out.push({label:i.name, kind:"signal", lat:i.lat, lon:i.lon,
-                iid:i.id});
+    const s = msScore(i.name, tokens);
+    if(s >= 0) out.push({label:i.name, sub:"signalized intersection",
+      kind:"signal", lat:i.lat, lon:i.lon, iid:i.id, score:s+6});
   });
   (grid?.cameras||[]).forEach(c=>{
-    if(c.live_name && c.live_name.toLowerCase().includes(ql))
-      out.push({label:c.live_name, kind:"camera", lat:c.lat, lon:c.lon,
-                iid:c.intersection_id});
+    if(!c.live_name) return;
+    const s = msScore(c.live_name, tokens);
+    if(s >= 0) out.push({label:c.live_name, sub:"live traffic camera",
+      kind:"camera", lat:c.lat, lon:c.lon, iid:c.intersection_id,
+      score:s+4});
   });
   (emergencies||[]).forEach(e=>{
-    if(e.address && e.address.toLowerCase().includes(ql))
-      out.push({label:`${e.type} · ${e.address}`, kind:"911",
-                lat:e.lat, lon:e.lon, emid:e.id});
+    if(!e.address) return;
+    const s = msScore(e.type + " " + e.address, tokens);
+    if(s >= 0) out.push({label:`${e.type} · ${e.address}`,
+      sub:"911 dispatch · "+fmtAgo(e.at), kind:"911",
+      lat:e.lat, lon:e.lon, emid:e.id, score:s});
   });
-  // De-dupe by label; local results first, capped.
+  // Best matches first; de-dupe by label; capped so geocoder rows fit.
+  out.sort((a,b)=>b.score-a.score);
   const seen = new Set();
   return out.filter(r=>{
     if(seen.has(r.label)) return false;
     seen.add(r.label); return true;
-  }).slice(0, 8);
+  }).slice(0, 6);
 }
 function msRender(){
   const box = $("msresults");
-  if(!msResults.length){ box.style.display = "none"; return; }
+  if(!msResults.length && !msPendingNote){ box.style.display = "none"; return; }
   box.innerHTML = msResults.map((r,i)=>
     `<div class="msrow ${i===msSel?"sel":""}" onmousedown="msPick(${i})">
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)}</span>
-      <span class="k">${r.kind}</span>
-    </div>`).join("");
+      <span class="lbl"><span class="l1">${esc(r.label)}</span>${
+        r.sub ? `<span class="l2">${esc(r.sub)}</span>` : ""}</span>
+      <span class="k">${esc(r.kind)}</span>
+    </div>`).join("")
+    + (msPendingNote ? `<div class="msnote">${esc(msPendingNote)}</div>` : "");
   box.style.display = "block";
 }
 function msPick(i){
@@ -2921,28 +2971,72 @@ function msPick(i){
   $("msinput").blur();
   if(r.iid && interMarkers[r.iid]){ focusIntersection(r.iid); return; }
   if(r.emid){ focusEmergency(r.emid); return; }
-  map.setView([r.lat, r.lon], 15);
+  if(r.bbox && r.bbox.length === 4){
+    // Nominatim bbox: [south, north, west, east] — fit AREAS (ZIP codes,
+    // neighborhoods, cities) instead of using a fixed point zoom.
+    map.fitBounds([[+r.bbox[0], +r.bbox[2]], [+r.bbox[1], +r.bbox[3]]],
+                  {maxZoom: 17});
+  } else {
+    map.setView([r.lat, r.lon], 16);
+  }
   L.popup().setLatLng([r.lat, r.lon])
-    .setContent(`<b>${esc(r.label)}</b><br><span style="color:#98A1AB">${r.kind}</span>`)
+    .setContent(`<b>${esc(r.label)}</b><br><span style="color:#98A1AB">${esc(r.sub||r.kind)}</span>`)
     .openOn(map);
 }
 window.msPick = msPick;
-async function msNominatim(q){
+async function msNominatim(q, isRetry){
+  if(!q || q.length < 2) return;
   const mySeq = ++msNomSeq;
+  if(msAbort) msAbort.abort();       // cancel the superseded request
+  msAbort = new AbortController();
+  msPendingNote = "searching OpenStreetMap…";
+  msRender();
+  // A bare 5-digit (or ZIP+4) query is a US postal-code lookup.
+  const zip = q.trim().match(/^(\d{5})(?:-\d{4})?$/);
+  const base = "https://nominatim.openstreetmap.org/search?format=jsonv2"
+    + "&addressdetails=1&dedupe=1&limit=6&viewbox=" + MS_VIEWBOX;
+  const url = zip
+    ? base + "&countrycodes=us&postalcode=" + zip[1]
+    : base + "&q=" + encodeURIComponent(q);
   try{
-    const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=5&viewbox=-122.46,47.75,-122.22,47.48&bounded=1&q="
-      + encodeURIComponent(q), {headers:{"Accept":"application/json"}});
-    if(!r.ok) return;
-    const rows = await r.json();
+    const r = await fetch(url, {headers:{"Accept":"application/json"},
+                                signal: msAbort.signal});
     if(mySeq !== msNomSeq) return;   // superseded by newer keystrokes
-    const add = rows.map(x=>({
-      label: x.display_name.split(",").slice(0,3).join(","),
-      kind: "osm", lat: parseFloat(x.lat), lon: parseFloat(x.lon)}));
+    if(!r.ok){
+      // One automatic retry on a busy/rate-limited geocoder.
+      if(!isRetry){
+        msPendingNote = "geocoder busy — retrying…"; msRender();
+        msTimer = setTimeout(()=>msNominatim(q, true), 1200);
+      } else {
+        msPendingNote = msResults.length ? "" : "geocoder unavailable — showing local matches only";
+        msRender();
+      }
+      return;
+    }
+    const rows = await r.json();
+    if(mySeq !== msNomSeq) return;
+    msPendingNote = "";
+    const add = rows.map(x=>{
+      const parts = (x.display_name||"").split(",").map(s=>s.trim());
+      return {label: parts.slice(0,2).join(", "),
+        sub: parts.slice(2, 6).join(", "),
+        kind: String(x.type||x.class||"place").replace(/_/g," "),
+        lat: parseFloat(x.lat), lon: parseFloat(x.lon),
+        bbox: x.boundingbox};
+    }).filter(a=>Number.isFinite(a.lat) && Number.isFinite(a.lon));
     const seen = new Set(msResults.map(r=>r.label));
-    add.forEach(a=>{ if(!seen.has(a.label)) msResults.push(a); });
+    add.forEach(a=>{ if(!seen.has(a.label)){ seen.add(a.label);
+      msResults.push(a); } });
     msResults = msResults.slice(0, 10);
+    if(!msResults.length)
+      msPendingNote = "no matches — try a fuller address or place name";
     msRender();
-  }catch(e){ /* offline / rate-limited — local results still shown */ }
+  }catch(e){
+    if(e && e.name === "AbortError") return;   // superseded — expected
+    if(mySeq !== msNomSeq) return;
+    msPendingNote = msResults.length ? "" : "geocoder unreachable — showing local matches only";
+    msRender();
+  }
 }
 function initMapSearch(){
   const inp = $("msinput");
@@ -2950,10 +3044,23 @@ function initMapSearch(){
   inp.addEventListener("input", ()=>{
     const q = inp.value.trim();
     clearTimeout(msTimer);
-    if(q.length < 2){ msResults = []; msSel = -1; msRender(); return; }
+    msPendingNote = "";
+    if(q.length < 2){
+      msResults = []; msSel = -1;
+      if(msAbort) msAbort.abort();
+      msRender(); return;
+    }
+    // Raw coordinates jump straight to the point — no geocoder needed.
+    const co = msParseCoords(q);
+    if(co){
+      msResults = [{label:`${co.lat.toFixed(5)}, ${co.lon.toFixed(5)}`,
+        sub:"go to coordinates", kind:"lat,lon", lat:co.lat, lon:co.lon}];
+      msSel = 0; msRender(); return;
+    }
     msResults = msLocalSearch(q); msSel = -1; msRender();
-    // Debounced Nominatim fallback for arbitrary addresses/places.
-    msTimer = setTimeout(()=>msNominatim(q), 450);
+    // Debounced geocoder for everything else: addresses, place names,
+    // ZIP codes, neighborhoods, cities.
+    msTimer = setTimeout(()=>msNominatim(q), 400);
   });
   inp.addEventListener("keydown", e=>{
     if(e.key === "ArrowDown"){ e.preventDefault();
@@ -2961,8 +3068,10 @@ function initMapSearch(){
     else if(e.key === "ArrowUp"){ e.preventDefault();
       msSel = Math.max(0, msSel-1); msRender(); }
     else if(e.key === "Enter"){ e.preventDefault();
-      msPick(msSel >= 0 ? msSel : 0); }
-    else if(e.key === "Escape"){ msResults = []; msRender(); inp.blur(); }
+      if(msResults.length){ msPick(msSel >= 0 ? msSel : 0); }
+      else { clearTimeout(msTimer); msNominatim(inp.value.trim()); } }
+    else if(e.key === "Escape"){ msResults = []; msPendingNote = "";
+      msRender(); inp.blur(); }
   });
   inp.addEventListener("blur", ()=>{
     setTimeout(()=>{ $("msresults").style.display = "none"; }, 150);
