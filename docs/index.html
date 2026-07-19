@@ -160,6 +160,48 @@
   td .mono{font-size:12px;}
   tr:last-child td{border-bottom:none;}
 
+  /* ---- investor slide decks ---- */
+  .deck{border:1px solid var(--line); background:var(--panel); margin-top:48px;}
+  .deckhead{padding:24px; border-bottom:1px solid var(--line);
+            border-top:3px solid var(--orange);}
+  .deck.d2 .deckhead{border-top-color:var(--blue);}
+  .deck.d3 .deckhead{border-top-color:var(--green);}
+  .deckhead .who{display:inline-block; font-family:var(--mono); font-size:12px;
+                 font-weight:700; letter-spacing:1px; text-transform:uppercase;
+                 padding:4px 12px; margin-bottom:12px; background:#20242A;
+                 color:var(--dim); border:1px solid #3A4048;}
+  .deck.d1 .deckhead .who{color:var(--orange); border-color:var(--orange);
+                          background:#2A1A10;}
+  .deck.d2 .deckhead .who{color:var(--blue); border-color:var(--blue);
+                          background:#12314A;}
+  .deck.d3 .deckhead .who{color:var(--green-t); border-color:var(--green);
+                          background:#0E2418;}
+  .deckhead h3{font-size:22px; margin-bottom:8px;}
+  .deckhead p{color:var(--dim); font-size:14px; max-width:800px;}
+  .deckhead p b{color:var(--ink); font-weight:600;}
+  .slides{display:grid; grid-template-columns:repeat(3,1fr);}
+  .slide{padding:20px; border-right:1px solid var(--line);
+         border-bottom:1px solid var(--line); display:flex;
+         flex-direction:column;}
+  .slide:nth-child(3n){border-right:none;}
+  .slide .slabel{font-family:var(--mono); font-size:11px; letter-spacing:1px;
+                 text-transform:uppercase; color:var(--orange);
+                 margin-bottom:8px;}
+  .deck.d2 .slide .slabel{color:var(--blue);}
+  .deck.d3 .slide .slabel{color:var(--green-t);}
+  .slide .big{display:block; font-family:var(--mono); font-size:26px;
+              color:var(--ink); line-height:1.1; margin-bottom:6px;}
+  .slide h4{font-size:15px; margin-bottom:8px;}
+  .slide p{font-size:13px; color:var(--dim); flex:1;}
+  .slide p b{color:var(--ink); font-weight:600;}
+  .slide .src{display:block; margin-top:10px; font-family:var(--mono);
+              font-size:10px; letter-spacing:.5px; color:#6B7480;
+              text-transform:uppercase;}
+  .deckask{padding:16px 24px; font-size:14px; color:var(--dim);}
+  .deckask .rid{font-family:var(--mono); color:var(--yellow); font-weight:700;
+                font-size:12px; letter-spacing:1px; margin-right:12px;}
+  .deckask b{color:var(--ink); font-weight:600;}
+
   /* faq */
   details{border:1px solid var(--line); background:var(--panel);
           margin-bottom:8px;}
@@ -187,6 +229,8 @@
     .feat.flip .shot{order:0;}
     .ladder{grid-template-columns:1fr;}
     .rule{grid-template-columns:1fr; gap:4px;}
+    .slides{grid-template-columns:1fr;}
+    .slide{border-right:none;}
     section{padding:56px 0;}
     .hero{padding-top:48px;}
     nav .links a{display:none;}
@@ -207,6 +251,7 @@
       <a href="#console">The console</a>
       <a href="#governance">Governance</a>
       <a href="#data">Data</a>
+      <a href="#investors">Investors</a>
       <a href="#faq">FAQ</a>
       <a class="btn primary" href="https://nexus.aindoori.com/">Open the console</a>
     </div>
@@ -216,20 +261,22 @@
 <header class="hero">
   <div class="wrap">
     <div class="kicker">Traffic Operations Platform</div>
-    <h1>See every incident. Weigh every option. <em>Sign every decision.</em></h1>
-    <p class="sub">Nexus City OS fuses live traffic cameras, transit GPS, 911
-      dispatch and weather into one operations console — then drafts signal-timing
-      responses that <b>a human operator reviews, approves and can revert</b>.
-      Every action lands in a hash-chained audit log built for public-records
-      scrutiny.</p>
+    <h1>The only traffic AI that knows <em>when to stay quiet.</em></h1>
+    <p class="sub"><b>Every decision verified, certified, and refusable.</b>
+      Nexus City OS fuses live traffic cameras, transit GPS, 911 dispatch and
+      weather into one operations console, then drafts signal-timing responses
+      that <b>a human operator reviews, approves and can revert</b> — each one
+      carrying a signed safety certificate. When a plan would break a rule, the
+      platform withholds it. Every action lands in a hash-chained audit log
+      built for public-records scrutiny.</p>
     <div class="cta">
       <a class="btn hot" href="https://nexus.aindoori.com/">Launch the live console</a>
       <a class="btn" href="#how">See how it works</a>
     </div>
     <div class="statline mono-host">
-      <div class="st"><b class="mono">&lt; 5 s</b><span>camera-feed freshness target</span></div>
       <div class="st"><b class="mono">6</b><span>live data feeds fused</span></div>
       <div class="st"><b class="mono">100%</b><span>actions require human approval</span></div>
+      <div class="st"><b class="mono">HMAC</b><span>signed certificate per plan</span></div>
       <div class="st"><b class="mono">SHA-256</b><span>hash-chained audit trail</span></div>
     </div>
     <div class="heroshot">
@@ -443,6 +490,45 @@
           SQLite</b>. Tampering breaks the chain visibly; the console verifies
           it continuously.</span></div>
     </div>
+
+    <h2 style="margin-top:72px">Certified, verifiable, refusable — by design.</h2>
+    <p class="lede">The safety gate isn't just internal. Every plan the platform
+      drafts leaves an artifact anyone can check, and the same rulepack is
+      exposed as a service — so a third party can verify our work without
+      trusting our word.</p>
+    <div class="ladder">
+      <div class="rung shadow">
+        <span class="tag">Certify</span>
+        <h4>A signature on every plan</h4>
+        <p>Each drafted plan carries an <b>HMAC-signed safety certificate</b>,
+          embedded in the hash chain before the entry is sealed. The
+          certificate is <b>issuer-verifiable</b>; asymmetric public-key
+          signatures are on the roadmap.</p>
+      </div>
+      <div class="rung advisory">
+        <span class="tag">Verify</span>
+        <h4>Rulepack as an API</h4>
+        <p>A stateless <b>MUTCD rulepack verification API</b> takes a timing
+          plan and returns per-rule R1–R5 pass/fail — plus a certificate-verify
+          endpoint that confirms any Nexus-issued cert's signature and chain
+          membership. Authenticated, no city graph required.</p>
+      </div>
+      <div class="rung live">
+        <span class="tag">Refuse</span>
+        <h4>Read-only, and it says no</h4>
+        <p>A read-only <b>MCP endpoint</b> lets an AI assistant query incidents,
+          plans and the audit trail. Ask it to <b>act</b> and it returns a
+          structured safety refusal — <b>no mutation path exists</b>.</p>
+      </div>
+    </div>
+
+    <p class="lede" style="margin-top:40px; margin-bottom:0">The pilot ships a
+      <b>counterfactual Decision Audit</b> — evidence of what the AI would have
+      done in Shadow mode versus what your operators did — and a
+      <b>NIST AI RMF critical-infrastructure conformity pack</b>. Road-traffic
+      AI is classified high-risk under <b>EU AI Act Annex III(2)</b> (obligations
+      from December 2027); EU Annex IV technical documentation is a documented
+      roadmap item, not a built feature today.</p>
   </div>
 </section>
 
@@ -485,6 +571,273 @@
       operate. It runs on one machine in the TOC and survives restarts with its
       mode, incidents and audit chain intact. Camera analysis redacts at the
       edge; frames used for detection are retained as evidence, not surveillance.</p>
+  </div>
+</section>
+
+<section id="investors">
+  <div class="wrap">
+    <div class="seclabel">Investor slide deck</div>
+    <h2>Three customers already pay to solve this. We give each one proof.</h2>
+    <p class="lede">The wedge is the same in every case: <b>traffic AI is only
+      sellable if its decisions can be independently verified.</b> Cities buy
+      the operations console, engineering firms buy the verification engine,
+      and insurers buy the evidence it leaves behind. Three buyers, one
+      platform, one moat — the safety gate and the audit chain underneath all
+      of it.</p>
+    <div class="statline">
+      <div class="st"><b class="mono">$190B+</b><span>annual U.S. congestion cost — TTI</span></div>
+      <div class="st"><b class="mono">330,000</b><span>U.S. traffic signals — NTOC</span></div>
+      <div class="st"><b class="mono">40:1</b><span>signal retiming benefit-cost — FHWA</span></div>
+      <div class="st"><b class="mono">40,000+</b><span>U.S. road deaths per year — NHTSA</span></div>
+    </div>
+
+    <!-- ============ DECK 1: CITIES ============ -->
+    <div class="deck d1">
+      <div class="deckhead">
+        <span class="who">Customer 01 · City &amp; County DOTs</span>
+        <h3>Traffic operations centers: buy the console, funded by federal grants.</h3>
+        <p>The agencies that run America’s signals are graded <b>D+</b> at
+          timing them, drowning in congestion cost, and newly flush with
+          federal safety money that requires <b>evidence</b> to win. Nexus is
+          the operations console that produces that evidence as a by-product
+          of doing the job.</p>
+      </div>
+      <div class="slides">
+        <div class="slide">
+          <span class="slabel">Slide 01 · Market</span>
+          <span class="big">$190B+</span>
+          <h4>Congestion is a budget line, not an abstraction</h4>
+          <p>U.S. drivers lose billions of hours to congestion every year, at a
+            national cost that exceeds <b>$190 billion</b> in wasted time and
+            fuel — and roughly <b>a quarter of it is caused by incidents</b>,
+            exactly the events this platform detects and mitigates.</p>
+          <span class="src">TTI Urban Mobility Report · FHWA congestion sources</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 02 · Problem</span>
+          <span class="big">D+</span>
+          <h4>Signal timing is the cheapest fix nobody staffs</h4>
+          <p>The National Traffic Signal Report Card graded U.S. signal
+            operations a <b>D+</b>. Poorly timed signals account for roughly
+            <b>10% of all traffic delay</b>, and FHWA estimates each minute a
+            lane stays blocked creates <b>four minutes</b> of residual delay.
+            TOCs juggle a dozen disconnected screens with shrinking staff.</p>
+          <span class="src">NTOC Report Card · FHWA</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 03 · Why now</span>
+          <span class="big">$5.5B</span>
+          <h4>Federal money that must be spent on exactly this</h4>
+          <p>The Bipartisan Infrastructure Law created <b>Safe Streets and
+            Roads for All ($5B)</b> and <b>SMART ($500M)</b> — grant programs
+            that fund safety analytics and TOC modernization but demand
+            <b>quantified, auditable outcomes</b>. 45+ U.S. cities have Vision
+            Zero commitments they must now measure against.</p>
+          <span class="src">USDOT SS4A · SMART grants · Vision Zero Network</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 04 · Product</span>
+          <span class="big">Shadow</span>
+          <h4>A pilot with literally zero operational risk</h4>
+          <p>Deployment starts in <b>Shadow mode</b>: the platform watches the
+            city’s existing public feeds, drafts plans, and executes
+            <b>nothing</b>. After a season it delivers a counterfactual
+            <b>Decision Audit</b> — what the AI would have done vs. what
+            operators did — plus a grant-ready evidence packet.</p>
+          <span class="src">Built &amp; shipping · ADR-003</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 05 · Unit economics</span>
+          <span class="big">40:1</span>
+          <h4>The best-documented ROI in transportation</h4>
+          <p>FHWA cites benefit-cost ratios of up to <b>40:1</b> for signal
+            retiming. Nexus runs as <b>one Python process with a SQLite
+            store</b> on a TOC workstation — no cloud fleet, no database team —
+            so the pilot fee is nearly all margin and the renewal is an easy
+            budget line.</p>
+          <span class="src">FHWA signal timing program · platform architecture</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 06 · Proof</span>
+          <span class="big">279</span>
+          <h4>Running today on six live Seattle feeds</h4>
+          <p>The reference deployment fuses cameras, transit GPS, 911 dispatch,
+            weather, highway alerts and crowdsourced data. <b>279 automated
+            tests</b>, a hash-chained audit trail, and a human-approval
+            requirement that is a <b>constant in the code</b>, not a setting.</p>
+          <span class="src">Live reference deployment · open source</span>
+        </div>
+      </div>
+      <div class="deckask"><span class="rid">THE ASK</span>Fixed-fee
+        <b>Shadow-mode pilot for one season</b>; the city exits with a
+        quantified evidence packet it can attach to its next SS4A or SMART
+        application. Land with the pilot, expand to Advisory, renew on Live.</div>
+    </div>
+
+    <!-- ============ DECK 2: ENGINEERING FIRMS ============ -->
+    <div class="deck d2">
+      <div class="deckhead">
+        <span class="who">Customer 02 · Engineering &amp; ITS Consultancies</span>
+        <h3>Signal-timing firms: buy the verification engine as an API.</h3>
+        <p>Thousands of intersections get retimed by consultants every year,
+          checked by hand against MUTCD. A new MUTCD edition just landed and
+          every deliverable now needs documented compliance. We sell the
+          <b>rulepack-as-a-service</b> that stamps their work.</p>
+      </div>
+      <div class="slides">
+        <div class="slide">
+          <span class="slabel">Slide 01 · Market</span>
+          <span class="big">~$4,500</span>
+          <h4>A recurring per-intersection services market</h4>
+          <p>FHWA puts signal retiming at roughly <b>$2,500–$5,500 per
+            intersection</b>, and ITE recommends retiming every <b>3–5
+            years</b>. Across ~330,000 U.S. signals that is a perpetual,
+            largely outsourced services market — every engagement a candidate
+            for automated verification.</p>
+          <span class="src">FHWA · ITE retiming guidance · NTOC</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 02 · Problem</span>
+          <span class="big">Manual</span>
+          <h4>Compliance QA is spreadsheets and seniority</h4>
+          <p>Yellow-change and pedestrian-clearance checks are still done by
+            hand from lookup tables. A timing error is not a typo — it is a
+            <b>professional-liability event</b> for the firm and a crash risk
+            for the public. There is no standard machine check today.</p>
+          <span class="src">Industry practice · ITE kinematic guidance</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 03 · Why now</span>
+          <span class="big">MUTCD 11</span>
+          <h4>A once-a-decade compliance wave</h4>
+          <p>The <b>11th Edition MUTCD</b> (December 2023) is the first full
+            revision in 14 years; states must adopt within two years. Every
+            agency and every consultant now has to re-check assumptions —
+            demand for <b>documented, repeatable verification</b> has never
+            been higher.</p>
+          <span class="src">FHWA MUTCD 11th Edition, Dec 2023</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 04 · Product</span>
+          <span class="big">/verify</span>
+          <h4>Stateless verification API, real engineering math</h4>
+          <p>POST a timing plan, get per-rule <b>R1–R5 pass/fail</b>: ITE
+            kinematic yellow-change, true FDW pedestrian clearance,
+            ring-and-barrier conflict checks. Swappable rulepacks (MUTCD,
+            work-zone) mean one API covers permanent and temporary
+            configurations.</p>
+          <span class="src">Built &amp; shipping · ADR-004, ADR-005</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 05 · Business model</span>
+          <span class="big">Per-plan</span>
+          <h4>Priced like a stamp, embedded in their deliverable</h4>
+          <p>Per-verification API pricing plus firm-level licenses. Each
+            passing plan can carry a <b>signed safety certificate</b> the firm
+            attaches to its submittal — a white-label “verified by” mark that
+            costs dollars and de-risks a five-figure engagement.</p>
+          <span class="src">Certificates · ADR-002</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 06 · Proof</span>
+          <span class="big">Nightly</span>
+          <h4>The rulepack is attacked every night</h4>
+          <p>An <b>adversarial fuzz harness runs nightly in CI</b>, throwing
+            malformed and hostile plans at the gate to prove it cannot be
+            tricked into a pass. Firms are buying certainty; we manufacture it
+            continuously and publish the method.</p>
+          <span class="src">Nightly fuzz CI · open source</span>
+        </div>
+      </div>
+      <div class="deckask"><span class="rid">THE ASK</span>API keys and
+        rulepack licenses for the firms already doing retiming work — they
+        bring the intersections, we bring the <b>machine-checkable MUTCD
+        compliance</b> their clients are starting to require.</div>
+    </div>
+
+    <!-- ============ DECK 3: INSURERS & RISK POOLS ============ -->
+    <div class="deck d3">
+      <div class="deckhead">
+        <span class="who">Customer 03 · Insurers &amp; Municipal Risk Pools</span>
+        <h3>Public-entity underwriters: buy the evidence trail.</h3>
+        <p>Roadway claims are a top source of liability for local governments,
+          verdicts are growing, and cities are adopting AI with no defensible
+          record of what it did. Nexus produces the <b>underwriting and
+          claims-defense evidence</b> — signed, hash-chained, independently
+          verifiable.</p>
+      </div>
+      <div class="slides">
+        <div class="slide">
+          <span class="slabel">Slide 01 · Market</span>
+          <span class="big">40,000+</span>
+          <h4>The liability behind every intersection</h4>
+          <p>The U.S. records <b>40,000+ road deaths a year</b>, with
+            pedestrian deaths near a four-decade high. Road and roadway-design
+            claims are consistently among the <b>largest liability exposures
+            for public entities</b> — the core book of municipal risk pools
+            and their reinsurers.</p>
+          <span class="src">NHTSA · GHSA · public-entity risk pooling</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 02 · Problem</span>
+          <span class="big">?</span>
+          <h4>“The AI did it” is currently unanswerable</h4>
+          <p>When an agency deploys AI in traffic operations, the underwriter’s
+            first question — <b>what exactly did it do, and who approved
+            it?</b> — has no answer today. Unpriceable ambiguity means declined
+            risks, exclusions, or premiums that kill adoption.</p>
+          <span class="src">Emerging AI-liability underwriting practice</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 03 · Why now</span>
+          <span class="big">2027</span>
+          <h4>Regulation is converting evidence into a requirement</h4>
+          <p>The <b>EU AI Act classifies road-traffic AI as high-risk</b>
+            (Annex III(2), obligations from December 2027), and NIST’s AI RMF
+            is becoming the U.S. reference for AI governance. Insurers who can
+            price verified AI operations first will own this segment.</p>
+          <span class="src">EU AI Act Annex III(2) · NIST AI RMF</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 04 · Product</span>
+          <span class="big">SHA-256</span>
+          <h4>Evidence that survives discovery</h4>
+          <p>Every decision — detection, recommendation, approval, execution,
+            rollback, even the AI’s <b>refusals</b> — lands in a hash-chained
+            log with an <b>HMAC-signed safety certificate</b> per plan.
+            Tampering breaks the chain visibly; the whole record exports as
+            JSONL for counsel.</p>
+          <span class="src">Built &amp; shipping · ADR-002</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 05 · Business model</span>
+          <span class="big">Telematics</span>
+          <h4>The UBI playbook, applied to city infrastructure</h4>
+          <p>Usage-based insurance proved carriers will <b>discount for
+            verified telemetry</b>. The analog here: risk pools subscribe to
+            certificate and audit-chain feeds from insured cities, price the
+            credit, and require Nexus-grade evidence in AI-operations
+            endorsements.</p>
+          <span class="src">UBI/telematics precedent</span>
+        </div>
+        <div class="slide">
+          <span class="slabel">Slide 06 · Proof</span>
+          <span class="big">3rd-party</span>
+          <h4>Verifiable without trusting us</h4>
+          <p>A stateless endpoint confirms any Nexus certificate’s
+            <b>signature and chain membership</b> — an adjuster or auditor can
+            check the record without access to the platform. Abstention is
+            recorded too: when the AI withheld a plan, <b>the withholding is
+            evidence</b>.</p>
+          <span class="src">Certificate-verify API · ADR-005</span>
+        </div>
+      </div>
+      <div class="deckask"><span class="rid">THE ASK</span>A data-sharing
+        pilot with one <b>municipal risk pool</b>: its member cities run
+        Shadow-mode Nexus, the pool receives the certificate feed, and
+        together we define the first <b>AI-operations underwriting credit</b>
+        for public entities.</div>
+    </div>
   </div>
 </section>
 
@@ -539,6 +892,26 @@
           detection-time evidence tied to specific incidents, then released from
           memory on a retention schedule. There is no face or plate recognition
           anywhere in the pipeline.</div>
+      </details>
+      <details>
+        <summary>Can a third party verify a plan without trusting you?</summary>
+        <div class="a">Yes. Every drafted plan carries an <b>HMAC-signed
+          certificate</b> embedded in the hash chain, and a stateless
+          verification API returns per-rule MUTCD R1–R5 results for any submitted
+          timing plan plus a certificate-verify endpoint that confirms a cert's
+          signature and chain membership. The signatures are <b>issuer-verifiable
+          (symmetric HMAC)</b> today; asymmetric public-key signatures are on the
+          roadmap, and we say so plainly.</div>
+      </details>
+      <details>
+        <summary>What can an AI assistant actually do through the platform?</summary>
+        <div class="a">The <b>MCP endpoint is read-only</b>. An assistant can
+          query incidents, plans and the audit trail (subject to role), but any
+          attempt to <b>act</b> returns a structured safety refusal — there is no
+          mutation path behind it. This is the honest core of the product today:
+          verification, provenance and abstention. <b>Verified AI actuation is a
+          roadmap slide</b>, and a read-only NTCIP 1202 controller bridge is its
+          credible first step — not something the pilot executes.</div>
       </details>
       <details>
         <summary>Our signals aren’t in Seattle. How does onboarding work?</summary>
