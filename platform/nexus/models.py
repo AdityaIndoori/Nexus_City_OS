@@ -38,6 +38,9 @@ class Role(str, Enum):
     ANALYST = "analyst"
     OPERATOR = "operator"
     ADMIN = "admin"
+    # Community Watch: self-signed-up civilians. Strictly OUTSIDE the
+    # operator RBAC ladder — a citizen can never touch a governance action.
+    CITIZEN = "citizen"
 
 
 class IncidentState(str, Enum):

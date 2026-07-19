@@ -68,6 +68,33 @@ CREATE INDEX IF NOT EXISTS idx_ch_at ON congestion_history(at);
 -- indexes each /api/analytics call was a full table scan.
 CREATE INDEX IF NOT EXISTS idx_inc_updated ON incidents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_plans_updated ON plans(updated_at);
+-- Community Watch (civilian participation layer): profiles, photo-backed
+-- reports/confirmations, and per-incident comments.
+CREATE TABLE IF NOT EXISTS community_profiles (
+    user_id     TEXT PRIMARY KEY,
+    json        TEXT NOT NULL,
+    updated_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS community_reports (
+    report_id   TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    incident_id TEXT,
+    kind        TEXT NOT NULL,          -- "confirm" | "report"
+    status      TEXT NOT NULL,          -- "verified" | "rejected" | "pending"
+    json        TEXT NOT NULL,
+    photo       BLOB,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cr_status ON community_reports(status);
+CREATE INDEX IF NOT EXISTS idx_cr_incident ON community_reports(incident_id);
+CREATE TABLE IF NOT EXISTS community_comments (
+    comment_id  TEXT PRIMARY KEY,
+    incident_id TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cc_incident ON community_comments(incident_id);
 """
 
 
@@ -264,3 +291,109 @@ class Store:
             rows = self._conn.execute(
                 "SELECT user_id, role FROM users ORDER BY user_id").fetchall()
         return [{"user_id": r[0], "role": r[1]} for r in rows]
+
+    # ---- community watch ---------------------------------------------------
+
+    def upsert_community_profile(self, user_id: str,
+                                 payload: Dict[str, Any],
+                                 updated_at: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO community_profiles (user_id, json, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
+                "json=excluded.json, updated_at=excluded.updated_at",
+                (user_id, json.dumps(payload, default=str), updated_at))
+            self._conn.commit()
+
+    def get_community_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT json FROM community_profiles WHERE user_id=?",
+                (user_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def insert_community_report(self, report_id: str, user_id: str,
+                                incident_id: Optional[str], kind: str,
+                                status: str, payload: Dict[str, Any],
+                                photo: Optional[bytes],
+                                created_at: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO community_reports (report_id, user_id, "
+                "incident_id, kind, status, json, photo, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (report_id, user_id, incident_id, kind, status,
+                 json.dumps(payload, default=str), photo, created_at))
+            self._conn.commit()
+
+    def update_community_report(self, report_id: str, status: str,
+                                incident_id: Optional[str] = None) -> None:
+        with self._lock:
+            if incident_id is not None:
+                self._conn.execute(
+                    "UPDATE community_reports SET status=?, incident_id=? "
+                    "WHERE report_id=?", (status, incident_id, report_id))
+            else:
+                self._conn.execute(
+                    "UPDATE community_reports SET status=? WHERE report_id=?",
+                    (status, report_id))
+            self._conn.commit()
+
+    def get_community_report(self, report_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT report_id, user_id, incident_id, kind, status, json, "
+                "photo, created_at FROM community_reports WHERE report_id=?",
+                (report_id,)).fetchone()
+        if row is None:
+            return None
+        d = json.loads(row[5])
+        d.update({"report_id": row[0], "user_id": row[1],
+                  "incident_id": row[2], "kind": row[3], "status": row[4],
+                  "photo": row[6], "created_at": row[7]})
+        return d
+
+    def community_reports(self, status: Optional[str] = None,
+                          incident_id: Optional[str] = None,
+                          limit: int = 200) -> List[Dict[str, Any]]:
+        sql = ("SELECT report_id, user_id, incident_id, kind, status, json, "
+               "created_at FROM community_reports WHERE 1=1")
+        args: List[Any] = []
+        if status is not None:
+            sql += " AND status=?"
+            args.append(status)
+        if incident_id is not None:
+            sql += " AND incident_id=?"
+            args.append(incident_id)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            d = json.loads(r[5])
+            d.update({"report_id": r[0], "user_id": r[1],
+                      "incident_id": r[2], "kind": r[3], "status": r[4],
+                      "created_at": r[6]})
+            out.append(d)
+        return out
+
+    def insert_community_comment(self, comment_id: str, incident_id: str,
+                                 user_id: str, text: str,
+                                 created_at: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO community_comments (comment_id, incident_id, "
+                "user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+                (comment_id, incident_id, user_id, text, created_at))
+            self._conn.commit()
+
+    def community_comments(self, incident_id: str,
+                           limit: int = 200) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT comment_id, user_id, text, created_at FROM "
+                "community_comments WHERE incident_id=? ORDER BY created_at "
+                "LIMIT ?", (incident_id, limit)).fetchall()
+        return [{"comment_id": r[0], "user_id": r[1], "text": r[2],
+                 "at": r[3]} for r in rows]

@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus Community Watch — Seattle</title>
+<meta name="description" content="Get notified about traffic incidents near you, confirm them with a photo, and help your city respond faster.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --bg:#121417; --panel:#191C20; --panel2:#20242A; --line:#2E333A;
+    --ink:#E8EAED; --dim:#98A1AB;
+    --orange:#FF4F00; --yellow:#F7B500; --green:#00843D; --green-t:#3BB273;
+    --blue:#7FA6C9;
+    --mono:Consolas,"Cascadia Mono","Courier New",monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; border-radius:0;}
+  body{background:var(--bg); color:var(--ink);
+       font:15px/1.5 "Segoe UI",system-ui,sans-serif; min-height:100vh;}
+  .mono{font-family:var(--mono);}
+  a{color:var(--blue); text-decoration:none;}
+  button{background:var(--panel2); color:var(--ink); border:1px solid #3A4048;
+         padding:10px 16px; font-size:14px; cursor:pointer;
+         font-family:"Segoe UI",sans-serif;}
+  button:hover{background:#282D34;}
+  button.primary{background:#12314A; border-color:var(--blue); color:#CFE0EF;}
+  button.hot{background:var(--green); border-color:#00A34C; color:#fff;
+             font-weight:700;}
+  button.warn{background:#33150A; border-color:var(--orange);
+              color:var(--orange);}
+  button:disabled{opacity:.5; cursor:default;}
+  input,select,textarea{background:var(--panel2); color:var(--ink);
+    border:1px solid var(--line); padding:10px; font-size:14px; width:100%;
+    font-family:"Segoe UI",sans-serif;}
+  input:focus,textarea:focus{outline:none; border-color:var(--yellow);}
+  label{display:block; font-size:11px; color:var(--dim);
+        text-transform:uppercase; letter-spacing:.5px; margin:12px 0 4px;}
+
+  header{position:sticky; top:0; z-index:1100; display:flex;
+         align-items:center; gap:12px; padding:12px 16px;
+         background:var(--panel); border-bottom:2px solid var(--line);}
+  header h1{font-size:15px; letter-spacing:1px; font-weight:700;}
+  header h1 span{color:var(--orange);}
+  header .who{margin-left:auto; font-size:12px; color:var(--dim);}
+  header .who b{color:var(--ink);}
+  header button{padding:4px 10px; font-size:12px; margin-left:8px;}
+
+  .wrap{max-width:640px; margin:0 auto; padding:16px;}
+
+  /* auth card */
+  .authcard{background:var(--panel); border:1px solid var(--line);
+            border-top:4px solid var(--green); padding:24px; margin-top:8vh;}
+  .authcard h2{font-size:18px; margin-bottom:4px;}
+  .authcard .sub{color:var(--dim); font-size:13px; margin-bottom:8px;}
+  .tabs{display:flex; border-bottom:1px solid var(--line); margin:12px 0;}
+  .tabs span{padding:8px 16px; cursor:pointer; color:var(--dim);
+             font-size:13px; font-weight:700; text-transform:uppercase;
+             letter-spacing:.5px; border-bottom:2px solid transparent;}
+  .tabs span.on{color:var(--ink); border-bottom-color:var(--green);}
+  .err{color:var(--orange); font-size:13px; min-height:18px; margin-top:8px;}
+  .ok{color:var(--green-t); font-size:13px;}
+
+  /* map + feed */
+  #map{height:300px; border:1px solid var(--line); background:#1A1E23;}
+  .leaflet-container{background:#1A1E23;}
+  .leaflet-tile{filter:grayscale(.35) brightness(.66) contrast(1.08);}
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel2);
+    color:var(--ink); border:1px solid var(--line); border-radius:0;}
+
+  .toolbar{display:flex; gap:8px; align-items:center; margin:12px 0;
+           flex-wrap:wrap;}
+  .toolbar .r{margin-left:auto; display:flex; gap:8px; align-items:center;
+              font-size:12px; color:var(--dim);}
+  .toolbar input[type=range]{width:120px; padding:0;}
+
+  .card{background:var(--panel); border:1px solid var(--line);
+        border-left:4px solid var(--line); padding:12px; margin-bottom:8px;
+        cursor:pointer;}
+  .card:hover{border-color:#4A515A;}
+  .card.sev-hi{border-left-color:var(--orange);}
+  .card.sev-md{border-left-color:var(--yellow);}
+  .card .l1{display:flex; align-items:center; gap:8px;}
+  .card .l1 b{text-transform:uppercase; letter-spacing:.5px; font-size:14px;}
+  .card .dist{margin-left:auto; font-family:var(--mono); font-size:13px;
+              color:var(--yellow); white-space:nowrap;}
+  .card .l2{font-size:13px; color:var(--dim); margin-top:2px;}
+  .badge{display:inline-block; padding:0 8px; font-size:10px;
+         line-height:18px; text-transform:uppercase; letter-spacing:.5px;
+         border:1px solid var(--line); color:var(--dim);
+         font-family:var(--mono);}
+  .badge.green{border-color:var(--green); color:var(--green-t);}
+  .badge.yellow{border-color:var(--yellow); color:var(--yellow);}
+
+  /* detail sheet */
+  .sheet{background:var(--panel); border:1px solid var(--line);
+         border-top:4px solid var(--yellow); padding:16px; margin-top:12px;}
+  .sheet h3{font-size:16px; text-transform:uppercase; letter-spacing:.5px;}
+  .sheet .meta{color:var(--dim); font-size:12px; margin:4px 0 12px;}
+  .cchip{background:var(--panel2); border:1px solid var(--line);
+         padding:8px 12px; margin-bottom:6px; font-size:13px;}
+  .cchip .nm{color:var(--green-t); font-weight:700;}
+  .cchip .tm{float:right; color:var(--dim); font-size:11px;
+             font-family:var(--mono);}
+  .comment{border-left:2px solid var(--blue); padding:6px 10px;
+           margin-bottom:6px; font-size:13px; background:var(--panel2);}
+  .comment .nm{color:var(--blue); font-weight:700; font-size:12px;}
+  .comment .tm{float:right; color:var(--dim); font-size:11px;
+               font-family:var(--mono);}
+  .actions{display:flex; gap:8px; margin:12px 0; flex-wrap:wrap;}
+  .actions button{flex:1; min-height:44px;}
+
+  /* photo verify flow */
+  .verify{border:1px dashed var(--yellow); padding:16px; margin-top:12px;}
+  .verify h4{font-size:13px; text-transform:uppercase; letter-spacing:.5px;
+             color:var(--yellow); margin-bottom:8px;}
+  .verify .hint{font-size:12px; color:var(--dim); margin-bottom:8px;}
+  .preview{max-width:100%; max-height:220px; border:1px solid var(--line);
+           margin:8px 0; display:none;}
+  .gate{display:flex; gap:8px; align-items:center; padding:10px;
+        margin-top:8px; font-size:13px; border:1px solid var(--line);
+        background:var(--panel2);}
+  .gate.pass{border-color:var(--green); color:var(--green-t);}
+  .gate.fail{border-color:var(--orange); color:var(--orange);}
+  .gate.wait{border-color:var(--yellow); color:var(--yellow);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .spin{display:inline-block; width:14px; height:14px; flex:0 0 auto;
+        border:2px solid var(--yellow); border-top-color:transparent;
+        border-radius:50%; animation:spin .7s linear infinite;}
+
+  #toast{position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+         background:var(--panel); border:1px solid var(--yellow);
+         border-left:4px solid var(--yellow); padding:10px 16px;
+         display:none; z-index:1500; max-width:86%; font-size:13px;}
+  .empty{color:var(--dim); font-size:13px; padding:24px; text-align:center;
+         border:1px dashed var(--line);}
+  .repbar{display:flex; gap:16px; font-size:12px; color:var(--dim);
+          padding:8px 0; border-bottom:1px solid var(--line);
+          margin-bottom:12px;}
+  .repbar b{color:var(--ink); font-family:var(--mono);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NEXUS <span>COMMUNITY</span> WATCH</h1>
+  <span class="who" id="who"></span>
+</header>
+
+<div class="wrap" id="authview">
+  <div class="authcard">
+    <h2>Your streets. Your eyes. Verified.</h2>
+    <div class="sub">Get alerted to collisions, fires and 911 activity near
+      you — and help your city respond faster by confirming what you see.
+      Every photo is checked by AI vision before anything is published.</div>
+    <div class="tabs">
+      <span id="tab_up" class="on" onclick="setAuthTab('up')">Sign up</span>
+      <span id="tab_in" onclick="setAuthTab('in')">Sign in</span>
+    </div>
+    <label for="a_user">User ID (lowercase, 3–24 chars)</label>
+    <input id="a_user" autocomplete="username" placeholder="e.g. jane-doe">
+    <div id="dn_row">
+      <label for="a_name">Display name (shown on your reports)</label>
+      <input id="a_name" placeholder="e.g. Jane D.">
+    </div>
+    <label for="a_pass">Password (8+ characters)</label>
+    <input id="a_pass" type="password" autocomplete="new-password">
+    <button class="hot" style="width:100%;margin-top:16px"
+            onclick="doAuth()" id="authbtn">Create account</button>
+    <div class="err" id="autherr" role="alert"></div>
+  </div>
+</div>
+
+<div class="wrap" id="appview" style="display:none">
+  <div class="repbar">
+    <span>Reputation <b id="rep">0</b></span>
+    <span>Verified <b id="repv">0</b></span>
+    <span style="margin-left:auto">
+      <a href="#" onclick="openProfile();return false">⚙ Profile</a>
+      <a href="#" onclick="signOut();return false" style="margin-left:12px">Sign out</a>
+    </span>
+  </div>
+
+  <div id="profilebox" style="display:none" class="sheet">
+    <h3>Profile &amp; alerts</h3>
+    <label for="p_name">Display name</label>
+    <input id="p_name">
+    <label>Home location</label>
+    <div class="toolbar" style="margin:4px 0">
+      <button onclick="useMyLocation()">📍 Use my location</button>
+      <span class="meta" id="p_loc" style="font-size:12px;color:var(--dim)"></span>
+    </div>
+    <label for="p_radius">Alert radius: <b id="p_rv" class="mono"
+      style="color:var(--yellow)">1500 m</b></label>
+    <input id="p_radius" type="range" min="100" max="10000" step="100"
+           value="1500" oninput="$('p_rv').textContent=this.value+' m'">
+    <div class="toolbar" style="margin-top:12px">
+      <button class="primary" onclick="saveProfile()">Save</button>
+      <button onclick="$('profilebox').style.display='none'">Close</button>
+      <span class="r"><label style="margin:0;display:inline">🔔
+        <input type="checkbox" id="p_notify" style="width:auto"
+               onchange="toggleNotify(this.checked)"> Browser alerts</label></span>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div class="toolbar">
+    <button class="hot" onclick="startReport()">📷 Report an incident</button>
+    <span class="r">radius <b class="mono" id="radlabel"
+      style="color:var(--yellow)"></b> · <span id="feedcount"></span></span>
+  </div>
+
+  <div id="feed"></div>
+  <div id="detail"></div>
+  <div id="reportbox"></div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+function $(id){return document.getElementById(id);}
+function esc(t){const d=document.createElement("div");d.textContent=t;return d.innerHTML;}
+function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4000);}
+function ago(ts){const s=Math.max(0,Math.round(Date.now()/1000-ts));
+  if(s<60)return s+"s ago";if(s<3600)return Math.floor(s/60)+"m ago";
+  return Math.floor(s/3600)+"h "+Math.floor((s%3600)/60)+"m ago";}
+function fmtDist(m){return m<950?Math.round(m)+" m":(m/1000).toFixed(1)+" km";}
+
+let TOKEN=sessionStorage.getItem("ncw_token")||"";
+let ME=JSON.parse(sessionStorage.getItem("ncw_me")||"null");
+let profile=null, feed=[], selId=null, map=null, markers=[], homeMarker=null,
+    radiusCircle=null, notified=new Set(), myPos=null;
+
+async function api(path,body){
+  const opts=body!==undefined
+    ?{method:"POST",headers:{"Authorization":"Bearer "+TOKEN,
+      "Content-Type":"application/json"},body:JSON.stringify(body)}
+    :{headers:{"Authorization":"Bearer "+TOKEN}};
+  const r=await fetch(path,opts);
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){signOut();throw new Error("Please sign in again.");}
+  if(!r.ok)throw new Error(d.error||r.statusText);
+  return d;
+}
+
+/* ---------- auth ---------- */
+let authMode="up";
+function setAuthTab(m){authMode=m;
+  $("tab_up").classList.toggle("on",m==="up");
+  $("tab_in").classList.toggle("on",m==="in");
+  $("dn_row").style.display=m==="up"?"":"none";
+  $("authbtn").textContent=m==="up"?"Create account":"Sign in";}
+window.setAuthTab=setAuthTab;
+async function doAuth(){
+  $("autherr").textContent="";
+  try{
+    let s;
+    if(authMode==="up"){
+      const r=await fetch("/api/community/signup",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({user_id:$("a_user").value.trim(),
+          password:$("a_pass").value,
+          display_name:$("a_name").value.trim()})});
+      s=await r.json();if(!r.ok)throw new Error(s.error||"Signup failed");
+    }else{
+      const r=await fetch("/api/login",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({user_id:$("a_user").value.trim(),
+          password:$("a_pass").value})});
+      s=await r.json();if(!r.ok)throw new Error(s.error||"Sign-in failed");
+    }
+    TOKEN=s.token;ME={user_id:s.user_id,role:s.role};
+    sessionStorage.setItem("ncw_token",TOKEN);
+    sessionStorage.setItem("ncw_me",JSON.stringify(ME));
+    enterApp();
+  }catch(e){$("autherr").textContent=e.message;}
+}
+window.doAuth=doAuth;
+function signOut(){TOKEN="";ME=null;
+  sessionStorage.removeItem("ncw_token");sessionStorage.removeItem("ncw_me");
+  $("appview").style.display="none";$("authview").style.display="";
+  $("who").textContent="";}
+window.signOut=signOut;
+
+/* ---------- app ---------- */
+async function enterApp(){
+  $("authview").style.display="none";$("appview").style.display="";
+  profile=await api("/api/community/profile");
+  $("who").innerHTML=`<b>${esc(profile.display_name)}</b> · citizen`;
+  $("rep").textContent=profile.reputation;
+  $("repv").textContent=profile.reports_verified;
+  initMap();
+  if(profile.home_lat===null){
+    // First run: ask for location right away (the feed needs a center).
+    openProfile();
+    useMyLocation();
+  } else {
+    refreshFeed();
+  }
+  setInterval(refreshFeed,20000);
+  connectSSE();
+}
+function initMap(){
+  if(map)return;
+  map=L.map("map").setView([47.61,-122.33],13);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19,attribution:"&copy; OpenStreetMap contributors"}).addTo(map);
+}
+function openProfile(){
+  $("profilebox").style.display="";
+  $("p_name").value=profile.display_name;
+  $("p_radius").value=profile.radius_m;
+  $("p_rv").textContent=Math.round(profile.radius_m)+" m";
+  $("p_notify").checked=("Notification" in window)
+    && Notification.permission==="granted" && profile.notify;
+  $("p_loc").textContent=profile.home_lat!==null
+    ?`${profile.home_lat.toFixed(4)}, ${profile.home_lon.toFixed(4)}`
+    :"not set";
+}
+window.openProfile=openProfile;
+function useMyLocation(){
+  if(!navigator.geolocation){toast("Geolocation unavailable.");return;}
+  toast("Locating…");
+  navigator.geolocation.getCurrentPosition(p=>{
+    myPos=[p.coords.latitude,p.coords.longitude];
+    $("p_loc").textContent=`${myPos[0].toFixed(4)}, ${myPos[1].toFixed(4)}`;
+    profile.home_lat=myPos[0];profile.home_lon=myPos[1];
+    saveProfile();
+  },e=>{
+    // Fall back to downtown Seattle so the demo is usable anywhere.
+    myPos=[47.6097,-122.3331];
+    profile.home_lat=myPos[0];profile.home_lon=myPos[1];
+    $("p_loc").textContent="47.6097, -122.3331 (default: downtown Seattle)";
+    toast("Location denied — using downtown Seattle for the demo.");
+    saveProfile();
+  },{timeout:8000});
+}
+window.useMyLocation=useMyLocation;
+async function saveProfile(){
+  try{
+    profile=await api("/api/community/profile",{
+      display_name:$("p_name").value||profile.display_name,
+      home_lat:profile.home_lat,home_lon:profile.home_lon,
+      radius_m:parseFloat($("p_radius").value),
+      notify:$("p_notify").checked});
+    $("who").innerHTML=`<b>${esc(profile.display_name)}</b> · citizen`;
+    toast("Profile saved.");
+    refreshFeed();
+  }catch(e){toast("Save failed: "+e.message);}
+}
+window.saveProfile=saveProfile;
+async function toggleNotify(on){
+  if(on&&("Notification" in window)&&Notification.permission==="default")
+    await Notification.requestPermission();
+}
+window.toggleNotify=toggleNotify;
+
+/* ---------- nearby feed ---------- */
+let sse=null;
+function connectSSE(){
+  if(sse)sse.close();
+  sse=new EventSource("/api/events?token="+encodeURIComponent(TOKEN));
+  let queued=false;
+  sse.onmessage=()=>{if(queued)return;queued=true;
+    setTimeout(()=>{queued=false;refreshFeed();},600);};
+}
+async function refreshFeed(){
+  if(profile.home_lat===null)return;
+  let data;
+  try{data=await api("/api/community/nearby");}catch(e){return;}
+  feed=data.incidents;
+  $("radlabel").textContent=fmtDist(data.radius_m);
+  $("feedcount").textContent=feed.length+" nearby";
+  renderMapMarkers(data);
+  notifyNew();
+  renderFeed();
+  if(selId)openDetail(selId,true);
+}
+function renderMapMarkers(data){
+  markers.forEach(m=>map.removeLayer(m));markers=[];
+  if(homeMarker)map.removeLayer(homeMarker);
+  if(radiusCircle)map.removeLayer(radiusCircle);
+  const c=[data.center.lat,data.center.lon];
+  homeMarker=L.circleMarker(c,{radius:7,color:"#7FA6C9",weight:3,
+    fillColor:"#7FA6C9",fillOpacity:.5}).addTo(map).bindTooltip("You");
+  radiusCircle=L.circle(c,{radius:data.radius_m,color:"#3A4048",weight:1,
+    fillOpacity:.04}).addTo(map);
+  feed.forEach(i=>{
+    const col=i.severity>=0.7?"#FF4F00":"#F7B500";
+    const m=L.circleMarker([i.lat,i.lon],{radius:9,color:col,weight:2.5,
+      fillColor:col,fillOpacity:.5}).addTo(map)
+      .bindTooltip(`${i.type.replace(/_/g," ")} · ${fmtDist(i.distance_m)}`)
+      .on("click",()=>openDetail(i.id));
+    markers.push(m);
+  });
+  map.fitBounds(radiusCircle.getBounds(),{maxZoom:15});
+}
+function notifyNew(){
+  if(!("Notification" in window)||Notification.permission!=="granted")return;
+  feed.forEach(i=>{
+    if(notified.has(i.id))return;
+    notified.add(i.id);
+    try{
+      const n=new Notification(`🚨 ${i.type.replace(/_/g," ")} nearby`,{
+        body:`${i.intersection_name} · ${fmtDist(i.distance_m)} away`,
+        tag:i.id});
+      n.onclick=()=>{window.focus();openDetail(i.id);n.close();};
+    }catch(e){}
+  });
+}
+function renderFeed(){
+  if(!feed.length){
+    $("feed").innerHTML=`<div class="empty">Quiet right now — no active
+      incidents inside your ${fmtDist(profile.radius_m)} alert radius.
+      You'll be notified the moment something is detected.</div>`;
+    return;
+  }
+  $("feed").innerHTML=feed.map(i=>`
+    <div class="card ${i.severity>=0.7?"sev-hi":"sev-md"}"
+         onclick="openDetail('${i.id}')">
+      <div class="l1"><b>${esc(i.type.replace(/_/g," "))}</b>
+        ${i.confirmations?`<span class="badge green">✓ ${i.confirmations} confirmed</span>`:""}
+        ${i.detection_source==="community"?`<span class="badge yellow">community</span>`:""}
+        <span class="dist">${fmtDist(i.distance_m)}</span></div>
+      <div class="l2">📍 ${esc(i.intersection_name)} · detected ${ago(i.detected_at)}</div>
+    </div>`).join("");
+}
+
+/* ---------- detail + confirm ---------- */
+async function openDetail(id,soft){
+  selId=id;
+  let v;
+  try{v=await api("/api/community/incident?id="+encodeURIComponent(id));}
+  catch(e){$("detail").innerHTML="";selId=null;return;}
+  if(!soft){
+    const row=feed.find(f=>f.id===id);
+    if(row)map.setView([row.lat,row.lon],16);
+  }
+  $("detail").innerHTML=`
+  <div class="sheet">
+    <h3>${esc(v.type.replace(/_/g," "))}
+      <a href="#" style="float:right;font-size:12px"
+         onclick="selId=null;$('detail').innerHTML='';return false">✕ close</a></h3>
+    <div class="meta">📍 ${esc(v.intersection_name)} · ${esc(v.state)} ·
+      detected ${ago(v.detected_at)} · severity ${(v.severity*100).toFixed(0)}</div>
+    <div class="actions">
+      <button class="primary" onclick="startConfirm('${v.id}')">📷 I see it — confirm with photo</button>
+    </div>
+    <div id="confirmbox"></div>
+    ${v.confirmations.length?`<label>Community confirmations (${v.confirmations.length})</label>`:""}
+    ${v.confirmations.map(c=>`
+      <div class="cchip"><span class="nm">✓ ${esc(c.display_name)}</span>
+        <span class="tm">${ago(c.at)}</span>
+        ${c.note?`<div>${esc(c.note)}</div>`:""}
+        <img src="/api/community/photo?id=${c.report_id}&token=${encodeURIComponent(TOKEN)}"
+             style="max-width:100%;max-height:160px;margin-top:6px;border:1px solid var(--line)"
+             loading="lazy" onerror="this.style.display='none'">
+      </div>`).join("")}
+    <label>Comments (${v.comments.length})</label>
+    ${v.comments.map(c=>`
+      <div class="comment"><span class="nm">${esc(c.display_name)}</span>
+        <span class="tm">${ago(c.at)}</span><div>${esc(c.text)}</div></div>`).join("")
+      ||`<div class="meta" style="margin:0 0 8px">No comments yet.</div>`}
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input id="cmt_${v.id}" placeholder="Add a comment (e.g. which lanes are blocked)…"
+             maxlength="500" style="flex:1">
+      <button class="primary" onclick="postComment('${v.id}')">Post</button>
+    </div>
+  </div>`;
+}
+window.openDetail=openDetail;
+async function postComment(id){
+  const inp=$("cmt_"+id);const text=inp.value.trim();
+  if(!text)return;
+  try{
+    await api("/api/community/comment",{incident_id:id,text});
+    inp.value="";openDetail(id,true);
+  }catch(e){toast(e.message);}
+}
+window.postComment=postComment;
+
+/* ---------- photo flows (confirm + report) ---------- */
+function photoPicker(idPrefix,onReady){
+  return `
+    <input type="file" id="${idPrefix}_file" accept="image/*" capture="environment"
+           style="display:none" onchange="previewPhoto('${idPrefix}')">
+    <button onclick="$('${idPrefix}_file').click()">📷 Take / choose photo</button>
+    <img class="preview" id="${idPrefix}_prev">
+    <label for="${idPrefix}_note">Note (optional)</label>
+    <input id="${idPrefix}_note" maxlength="300"
+           placeholder="e.g. two cars blocking the right lane">`;
+}
+let photoB64={};
+function previewPhoto(prefix){
+  const f=$(prefix+"_file").files[0];
+  if(!f)return;
+  if(f.size>5*1024*1024){toast("Photo exceeds 5 MB — choose a smaller one.");return;}
+  const rd=new FileReader();
+  rd.onload=()=>{
+    photoB64[prefix]=rd.result.split(",",2)[1];
+    const img=$(prefix+"_prev");img.src=rd.result;img.style.display="block";
+  };
+  rd.readAsDataURL(f);
+}
+window.previewPhoto=previewPhoto;
+
+function startConfirm(incId){
+  $("confirmbox").innerHTML=`
+  <div class="verify">
+    <h4>Confirm this incident</h4>
+    <div class="hint">Your photo is checked by AI vision before it's
+      attached — it becomes part of the official incident record, visible
+      to city operators. You must be near the scene.</div>
+    ${photoPicker("cf")}
+    <div class="actions" style="margin-bottom:0">
+      <button class="hot" id="cf_send" onclick="sendConfirm('${incId}')">Verify &amp; attach</button>
+      <button onclick="$('confirmbox').innerHTML=''">Cancel</button>
+    </div>
+    <div id="cf_gate"></div>
+  </div>`;
+}
+window.startConfirm=startConfirm;
+function gate(el,cls,html){$(el).innerHTML=`<div class="gate ${cls}">${html}</div>`;}
+async function sendConfirm(incId){
+  if(!photoB64.cf){toast("Take or choose a photo first.");return;}
+  $("cf_send").disabled=true;
+  gate("cf_gate","wait",`<span class="spin"></span> AI vision is verifying your photo…`);
+  const pos=await getPos();
+  try{
+    const r=await api("/api/community/confirm",{incident_id:incId,
+      lat:pos[0],lon:pos[1],note:$("cf_note").value,photo_b64:photoB64.cf});
+    if(r.status==="verified"){
+      gate("cf_gate","pass",`✓ Verified — your confirmation is now part of
+        the incident record. ${esc(r.vision||"")}`);
+      toast("Confirmation attached. +5 reputation.");
+      setTimeout(()=>openDetail(incId,true),1200);
+    }else if(r.status==="pending"){
+      gate("cf_gate","wait",`⏳ AI vision is offline right now — your photo
+        was sent to a city operator for review. You'll get credit once
+        it's approved.`);
+    }else{
+      gate("cf_gate","fail",`✕ The AI couldn't see an incident in this
+        photo, so it was not attached. ${esc(r.vision||"")} Try a clearer
+        angle of the scene.`);
+      $("cf_send").disabled=false;
+    }
+    refreshProfile();
+  }catch(e){
+    gate("cf_gate","fail","✕ "+esc(e.message));
+    $("cf_send").disabled=false;
+  }
+}
+window.sendConfirm=sendConfirm;
+
+function startReport(){
+  $("reportbox").innerHTML=`
+  <div class="sheet" style="border-top-color:var(--orange)">
+    <h3>Report an incident
+      <a href="#" style="float:right;font-size:12px"
+         onclick="$('reportbox').innerHTML='';return false">✕ close</a></h3>
+    <div class="meta">A verified report becomes a REAL incident on the city
+      operations console — the same queue human operators triage. The AI
+      vision gate checks your photo first; if it can't verify it, a city
+      operator reviews it before anything is published.</div>
+    <label for="rp_type">What do you see?</label>
+    <select id="rp_type">
+      <option value="collision">🚗 Collision / crash</option>
+      <option value="stopped_vehicle">🛑 Stopped / disabled vehicle</option>
+      <option value="pedestrian_on_highway">🚶 Pedestrian in roadway</option>
+      <option value="congestion">🐌 Severe congestion</option>
+      <option value="transit_breakdown">🚌 Bus / transit breakdown</option>
+      <option value="wrong_way_driver">⛔ Wrong-way driver</option>
+    </select>
+    ${photoPicker("rp")}
+    <div class="actions" style="margin-bottom:0">
+      <button class="hot" id="rp_send" onclick="sendReport()">Verify &amp; report</button>
+    </div>
+    <div id="rp_gate"></div>
+  </div>`;
+  $("reportbox").scrollIntoView({behavior:"smooth"});
+}
+window.startReport=startReport;
+async function sendReport(){
+  if(!photoB64.rp){toast("A photo is required — it's how we verify reports.");return;}
+  $("rp_send").disabled=true;
+  gate("rp_gate","wait",`<span class="spin"></span> AI vision is verifying your photo…`);
+  const pos=await getPos();
+  try{
+    const r=await api("/api/community/report",{lat:pos[0],lon:pos[1],
+      type:$("rp_type").value,note:$("rp_note").value,
+      photo_b64:photoB64.rp});
+    if(r.status==="verified"&&r.attached){
+      gate("rp_gate","pass",`✓ Verified — this incident was already being
+        tracked, so your photo was attached as confirmation. +5 reputation.`);
+      setTimeout(()=>{$("reportbox").innerHTML="";openDetail(r.incident_id);},1500);
+    }else if(r.status==="verified"){
+      gate("rp_gate","pass",`✓ Verified &amp; published — incident
+        <span class="mono">${esc(r.incident_id)}</span> is now live on the
+        city operations console. +5 reputation.`);
+      setTimeout(()=>{$("reportbox").innerHTML="";refreshFeed();},1500);
+    }else if(r.status==="pending"){
+      gate("rp_gate","wait",`⏳ AI vision is offline — your report is in the
+        operator moderation queue and will publish once a human approves it.`);
+    }else{
+      gate("rp_gate","fail",`✕ The AI couldn't verify an incident in this
+        photo — nothing was published. ${esc(r.vision||"")}`);
+      $("rp_send").disabled=false;
+    }
+    refreshProfile();refreshFeed();
+  }catch(e){
+    gate("rp_gate","fail","✕ "+esc(e.message));
+    $("rp_send").disabled=false;
+  }
+}
+window.sendReport=sendReport;
+
+function getPos(){
+  return new Promise(res=>{
+    if(myPos)return res(myPos);
+    if(profile&&profile.home_lat!==null)
+      return res([profile.home_lat,profile.home_lon]);
+    if(!navigator.geolocation)return res([47.6097,-122.3331]);
+    navigator.geolocation.getCurrentPosition(
+      p=>{myPos=[p.coords.latitude,p.coords.longitude];res(myPos);},
+      ()=>res([47.6097,-122.3331]),{timeout:6000});
+  });
+}
+async function refreshProfile(){
+  try{profile=await api("/api/community/profile");
+    $("rep").textContent=profile.reputation;
+    $("repv").textContent=profile.reports_verified;
+  }catch(e){}
+}
+
+if(TOKEN&&ME){enterApp();}
+</script>
+</body>
+</html>

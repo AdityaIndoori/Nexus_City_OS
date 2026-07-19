@@ -55,6 +55,7 @@ from .analytics import Analytics
 from .auth import AuthError, Authenticator
 from .certs import CERT_ACTION
 from .cfaccess import AccessError, CloudflareAccess
+from .community import CommunityHub
 from .congestion import CongestionEstimator
 
 from .roadgeom import RoadGeometry
@@ -85,6 +86,7 @@ from .vision import VisionSweep
 import os as _os
 
 UI_PATH = Path(__file__).resolve().parent.parent / "ui" / "index.html"
+COMMUNITY_PATH = Path(__file__).resolve().parent.parent / "ui" / "community.html"
 LANDING_PATH = Path(__file__).resolve().parent.parent / "ui" / "landing.html"
 LANDING_ASSETS = Path(__file__).resolve().parent.parent / "ui" / "landing-assets"
 TICK_INTERVAL_S = 3.0
@@ -97,7 +99,16 @@ DEFAULT_DB = _os.environ.get(
 
 # Routes that do not require a session token.
 PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz",
-                 "/landing", "/landing/"}
+                 "/landing", "/landing/", "/community", "/community/",
+                 "/api/community/signup"}
+
+# Community photo uploads ride in JSON bodies (base64 jpeg) — allow a
+# larger body on exactly those two routes; everything else keeps the
+# tight default cap.
+COMMUNITY_UPLOAD_ROUTES = {"/api/community/confirm", "/api/community/report"}
+COMMUNITY_MAX_BODY_BYTES = 8 * 1024 * 1024
+# Roles allowed to moderate / view unpublished community content.
+MODERATOR_ROLES = ("operator", "admin", "analyst")
 
 # Dedicated marketing hostname (e.g. nexuscity.aindoori.com) — when a
 # request arrives with this Host, the LANDING PAGE is served at "/" and
@@ -204,6 +215,9 @@ class PlatformRuntime:
         # the topology is live, and the LLM client is available.
         self.vision = VisionSweep(self.engine, self.adapter)
         self.analytics = Analytics(self.store)
+        # Community Watch: civilian signup, photo-verified reports,
+        # comments — riding the same engine/audit/store.
+        self.community = CommunityHub(self.engine, self.store, self.auth)
         # Public-edge abuse protection (defense in depth behind Cloudflare):
         # per-IP token-bucket rate limiting + Turnstile on login.
         self.ratelimit = IPRateLimiter()
@@ -326,6 +340,8 @@ def _timing_plan_from_dict(data: Dict[str, Any]) -> SignalTimingPlan:
 
 def make_handler(runtime: PlatformRuntime):
     engine: NexusEngine = runtime.engine
+    community: CommunityHub = getattr(runtime, "community", None) \
+        or CommunityHub(engine, runtime.store, runtime.auth)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "NexusCityOS/1.1"
@@ -390,16 +406,16 @@ def make_handler(runtime: PlatformRuntime):
         class _BodyTooLarge(Exception):
             pass
 
-        def _body(self) -> Dict[str, Any]:
+        def _body(self, max_bytes: int = MAX_BODY_BYTES) -> Dict[str, Any]:
             self._body_malformed = False
             length = int(self.headers.get("Content-Length", 0))
             if length == 0:
                 return {}
-            if length > MAX_BODY_BYTES:
+            if length > max_bytes:
                 # Drain a bounded amount so the socket stays sane, then 413.
-                self.rfile.read(min(length, MAX_BODY_BYTES))
+                self.rfile.read(min(length, max_bytes))
                 raise Handler._BodyTooLarge(
-                    f"Request body exceeds {MAX_BODY_BYTES} bytes.")
+                    f"Request body exceeds {max_bytes} bytes.")
             raw = self.rfile.read(length)
             try:
                 data = json.loads(raw)
@@ -425,6 +441,20 @@ def make_handler(runtime: PlatformRuntime):
                 if name == "CF_Authorization":
                     return value.strip()
             return ""
+
+        def _citizen_blocked(self, principal: Dict[str, Any],
+                             route: str, extra_ok=()) -> bool:
+            """Citizens are hard-gated to the Community Watch API only —
+            no operator data plane, no governance actions. Writes the 403
+            and returns True when blocked."""
+            if principal.get("role") != "citizen":
+                return False
+            if route.startswith("/api/community/") or route in extra_ok:
+                return False
+            self._send_json(
+                {"error": "Citizen accounts are limited to the Community "
+                          "Watch API."}, 403)
+            return True
 
         def _principal(self, parsed) -> Dict[str, Any]:
             """Resolve the acting principal.
@@ -506,6 +536,13 @@ def make_handler(runtime: PlatformRuntime):
                     # to prospective cities with real screenshots.
                     self._serve_landing()
                     return
+                if route in ("/community", "/community/"):
+                    # Community Watch app (civilian signup + nearby alerts +
+                    # photo confirmation). Public shell; the API inside is
+                    # session-gated.
+                    self._send_html(
+                        COMMUNITY_PATH.read_text(encoding="utf-8"))
+                    return
                 if route.startswith("/landing-assets/"):
                     # Static screenshot assets for the landing page.
                     name = route.rsplit("/", 1)[-1]
@@ -567,6 +604,9 @@ def make_handler(runtime: PlatformRuntime):
                     return
                 # All other GET API routes require a valid session.
                 principal = self._principal(parsed)
+                if self._citizen_blocked(principal, route,
+                                         extra_ok=("/api/whoami",)):
+                    return
 
                 if route == "/api/status":
                     self._send_json(engine.status())
@@ -866,6 +906,47 @@ def make_handler(runtime: PlatformRuntime):
                         "audit_chain_intact":
                             engine.audit.verify_chain_cached(),
                     })
+                elif route == "/api/community/profile":
+                    self._send_json(community.get_profile(principal["sub"]))
+                elif route == "/api/community/nearby":
+                    params = parse_qs(parsed.query)
+
+                    def _pf(name):
+                        v = params.get(name, [""])[0]
+                        return float(v) if v not in ("", None) else None
+                    self._send_json(community.nearby(
+                        principal["sub"], lat=_pf("lat"), lon=_pf("lon"),
+                        radius=_pf("radius")))
+                elif route == "/api/community/incident":
+                    params = parse_qs(parsed.query)
+                    self._send_json(community.incident_view(
+                        params.get("id", [""])[0]))
+                elif route == "/api/community/pending":
+                    # Moderation queue: unpublished community submissions.
+                    if principal["role"] not in MODERATOR_ROLES:
+                        self._send_json(
+                            {"error": "The moderation queue requires an "
+                                      "operator role."}, 403)
+                        return
+                    self._send_json({"reports": community.pending()})
+                elif route == "/api/community/photo":
+                    params = parse_qs(parsed.query)
+                    rec = community.photo(params.get("id", [""])[0])
+                    # Unmoderated photos are operator-eyes-only.
+                    if rec["status"] != "verified" and \
+                            principal["role"] not in MODERATOR_ROLES:
+                        self._send_json(
+                            {"error": "This photo is awaiting "
+                                      "moderation."}, 403)
+                        return
+                    payload = bytes(rec["photo"])
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control",
+                                     "private, max-age=3600")
+                    self.end_headers()
+                    self.wfile.write(payload)
                 elif route == "/api/incident/frame":
                     # Serve the FROZEN detection-time camera frame for an
                     # incident (never the latest live image). 404 when the
@@ -934,11 +1015,26 @@ def make_handler(runtime: PlatformRuntime):
             if not self._rate_ok(login=(route == "/api/login")):
                 return
             try:
-                body = self._body()
+                body = self._body(
+                    max_bytes=COMMUNITY_MAX_BODY_BYTES
+                    if route in COMMUNITY_UPLOAD_ROUTES else MAX_BODY_BYTES)
             except Handler._BodyTooLarge as exc:
                 self._send_json({"error": str(exc)}, 413)
                 return
             try:
+                if route == "/api/community/signup":
+                    # Public self-service civilian signup (Community Watch).
+                    if runtime.cfaccess.enabled:
+                        self._send_json(
+                            {"error": "Sign-up is handled by Cloudflare "
+                                      "Access on this deployment."}, 403)
+                        return
+                    session = community.signup(
+                        str(body.get("user_id", "")),
+                        str(body.get("password", "")),
+                        str(body.get("display_name", "")))
+                    self._send_json(session)
+                    return
                 if route == "/api/login":
                     # Cloudflare Access mode: the in-app password login is
                     # disabled — sign-in is handled entirely at Cloudflare's
@@ -981,6 +1077,9 @@ def make_handler(runtime: PlatformRuntime):
                 # user is the token subject — never the request body.
                 principal = self._principal(parsed)
                 user_id = principal["sub"]
+                if self._citizen_blocked(principal, route,
+                                         extra_ok=("/api/logout",)):
+                    return
 
                 if route == "/api/logout":
                     auth_header = self.headers.get("Authorization", "")
@@ -1170,6 +1269,36 @@ def make_handler(runtime: PlatformRuntime):
                         "verdict": ("VALID" if sig_ok and chain_ok
                                     else "INVALID"),
                     })
+                elif route == "/api/community/profile":
+                    self._send_json(
+                        community.update_profile(user_id, body))
+                elif route == "/api/community/confirm":
+                    self._send_json(community.confirm(
+                        user_id, str(body.get("incident_id", "")),
+                        body.get("lat"), body.get("lon"),
+                        str(body.get("note", "")),
+                        str(body.get("photo_b64", ""))))
+                elif route == "/api/community/report":
+                    self._send_json(community.report(
+                        user_id, body.get("lat"), body.get("lon"),
+                        str(body.get("type", "")),
+                        str(body.get("note", "")),
+                        str(body.get("photo_b64", ""))))
+                elif route == "/api/community/comment":
+                    self._send_json(community.comment(
+                        user_id, str(body.get("incident_id", "")),
+                        str(body.get("text", ""))))
+                elif route == "/api/community/moderate":
+                    # Publish/discard decisions on pending community
+                    # reports — operator/admin only, audit-logged.
+                    if principal["role"] not in ("operator", "admin"):
+                        self._send_json(
+                            {"error": "Moderation requires an operator or "
+                                      "admin role."}, 403)
+                        return
+                    self._send_json(community.moderate(
+                        user_id, str(body.get("report_id", "")),
+                        str(body.get("decision", ""))))
                 elif route == "/mcp":
                     # MCP JSON-RPC 2.0 endpoint (ADR-007, M1).
                     # Principal comes from the verified token (above); never
