@@ -1,13 +1,14 @@
 """
-Community Watch integration tests (civilian signup, nearby alerts, photo
-confirmation, citizen reports, comments, moderation).
+Community Watch integration tests (civilian identity via Cloudflare Access,
+nearby alerts, photo confirmation, citizen reports, comments, moderation).
 
 Every test drives the REAL HTTP handler in-process (raw HTTP bytes over
-BytesIO through make_handler()) against the real engine, store, and auth —
-no mocks except the LLM vision boundary (network), patched per the suite's
-network-isolation convention. Assertions check behavioural consequences
-(incident state, audit entries, persisted rows), never implementation
-mirrors.
+BytesIO through make_handler()) against the real engine and store — no mocks
+except the LLM vision boundary (network) and the runtime's cfaccess (a
+StubAccess that resolves canned assertion strings to principals; the real
+RS256 JWT round-trip is covered by test_cfaccess/test_production).
+Assertions check behavioural consequences (incident state, audit entries,
+persisted rows), never implementation mirrors.
 """
 from __future__ import annotations
 
@@ -23,13 +24,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nexus import bootstrap
 from nexus.adapters import SeattleAdapter
-from nexus.auth import Authenticator
-from nexus.cfaccess import CloudflareAccess
 from nexus.community import CommunityHub
 from nexus.models import Incident, IncidentType, new_id
 from nexus.security import IPRateLimiter
 from nexus.server import make_handler
 from nexus.store import Store
+from tests.helpers_auth import StubAccess
 
 # A tiny valid-enough JPEG payload (vision is patched; bytes just flow
 # through storage and the frame endpoint).
@@ -54,12 +54,11 @@ class FakeRuntime:
         self.store = Store(":memory:")
         self.engine, self.edge, self.adapter = bootstrap(
             SeattleAdapter(seed=42), self.store)
-        self.auth = Authenticator(self.store)
-        self.cfaccess = CloudflareAccess.from_env()
-        # Generous buckets: IP throttling is not under test here.
-        self.ratelimit = IPRateLimiter(general_capacity=100000,
-                                       login_capacity=100000)
-        self.community = CommunityHub(self.engine, self.store, self.auth)
+        self.cfaccess = StubAccess()
+        self.dev_identity = None
+        # Generous bucket: IP throttling is not under test here.
+        self.ratelimit = IPRateLimiter(general_capacity=100000)
+        self.community = CommunityHub(self.engine, self.store)
 
 
 def _drive(handler_cls, request: bytes):
@@ -81,11 +80,13 @@ def _drive(handler_cls, request: bytes):
     return status, headers, payload
 
 
-def http_post(handler_cls, path, body, token=None):
+def http_post(handler_cls, path, body, token=None, cookie=None):
     raw = body if isinstance(body, bytes) else json.dumps(body).encode()
     lines = [f"POST {path} HTTP/1.1", "Host: test"]
     if token:
-        lines.append(f"Authorization: Bearer {token}")
+        lines.append(f"Cf-Access-Jwt-Assertion: {token}")
+    if cookie:
+        lines.append(f"Cookie: CF_Authorization={cookie}")
     lines.append("Content-Type: application/json")
     lines.append(f"Content-Length: {len(raw)}")
     request = ("\r\n".join(lines) + "\r\n\r\n").encode("ascii") + raw
@@ -96,10 +97,12 @@ def http_post(handler_cls, path, body, token=None):
         return status, {"_raw": payload}
 
 
-def http_get(handler_cls, path, token=None):
+def http_get(handler_cls, path, token=None, cookie=None):
     lines = [f"GET {path} HTTP/1.1", "Host: test"]
     if token:
-        lines.append(f"Authorization: Bearer {token}")
+        lines.append(f"Cf-Access-Jwt-Assertion: {token}")
+    if cookie:
+        lines.append(f"Cookie: CF_Authorization={cookie}")
     request = ("\r\n".join(lines) + "\r\n\r\n").encode("ascii")
     status, headers, payload = _drive(handler_cls, request)
     if headers.get("content-type", "").startswith("application/json"):
@@ -120,24 +123,23 @@ class CommunityBase(unittest.TestCase):
     def setUpClass(cls):
         cls.runtime = FakeRuntime()
         cls.handler_cls = make_handler(cls.runtime)
-        cls.op_token = cls.runtime.auth.login("op-1", "nexus-op-1")["token"]
+        cls.op_token = cls.runtime.cfaccess.add(
+            "op-assertion", "op@city.gov", "operator")
         cls._seq = 0
 
-    @classmethod
-    def signup(cls, handle=None, password="community-pass-1",
-               display_name="Test Citizen"):
+    def citizen(self, display_name=None):
+        """Register a citizen principal (Access-invited email identity);
+        optionally set a display name via the profile endpoint."""
+        cls = type(self)
         cls._seq += 1
-        handle = handle or f"citizen-{cls._seq}"
-        status, resp = http_post(
-            cls.handler_cls, "/api/community/signup",
-            {"user_id": handle, "password": password,
-             "display_name": display_name})
-        return status, resp
-
-    def citizen(self, **kw):
-        status, resp = self.signup(**kw)
-        self.assertEqual(status, 200, resp)
-        return resp["token"], resp["user_id"]
+        email = f"citizen-{cls._seq}@example.com"
+        token = self.runtime.cfaccess.add(
+            f"citizen-assertion-{cls._seq}", email, "citizen")
+        if display_name:
+            s, resp = http_post(self.handler_cls, "/api/community/profile",
+                                {"display_name": display_name}, token=token)
+            self.assertEqual(s, 200, resp)
+        return token, email
 
     def make_incident(self, intersection_id, itype=IncidentType.COLLISION,
                       severity=0.8):
@@ -161,41 +163,39 @@ class CommunityBase(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Signup + identity
+# Identity (Cloudflare Access only)
 # ---------------------------------------------------------------------------
 
-class TestSignup(CommunityBase):
+class TestIdentity(CommunityBase):
 
-    def test_signup_creates_working_citizen_session(self):
-        status, resp = self.signup(handle="ada-lovelace",
-                                   display_name="Ada L.")
-        self.assertEqual(status, 200)
-        self.assertEqual(resp["role"], "citizen")
-        # The returned token actually authenticates against the service.
+    def test_signup_route_is_gone(self):
+        s, resp = http_post(self.handler_cls, "/api/community/signup",
+                            {"user_id": "someone", "password": "x" * 12},
+                            token=self.op_token)
+        self.assertEqual(s, 404)
+
+    def test_signup_unauthenticated_is_401(self):
+        s, resp = http_post(self.handler_cls, "/api/community/signup",
+                            {"user_id": "someone", "password": "x" * 12})
+        self.assertEqual(s, 401)
+
+    def test_citizen_profile_auto_created_on_first_mutating_call(self):
+        token, email = self.citizen()
+        s, resp = http_post(self.handler_cls, "/api/community/profile",
+                            {"radius_m": 2000}, token=token)
+        self.assertEqual(s, 200, resp)
         s, profile, _ = http_get(self.handler_cls, "/api/community/profile",
-                                 token=resp["token"])
+                                 token=token)
+        self.assertEqual(profile["user_id"], email)
+        # Display name defaults to the email local-part.
+        self.assertEqual(profile["display_name"], email.split("@")[0])
+
+    def test_cookie_only_auth_reaches_authenticated_route(self):
+        token, email = self.citizen()
+        s, profile, _ = http_get(self.handler_cls, "/api/community/profile",
+                                 cookie=token)
         self.assertEqual(s, 200)
-        self.assertEqual(profile["user_id"], "ada-lovelace")
-        self.assertEqual(profile["display_name"], "Ada L.")
-        # Signup is audit-logged.
-        self.assertTrue(any(
-            e["action"] == "community_signup"
-            and e["actor"] == "ada-lovelace"
-            for e in self.runtime.engine.audit.entries(limit=200)))
-
-    def test_signup_rejects_taken_user_id(self):
-        status, resp = self.signup(handle="op-1")   # operator account exists
-        self.assertEqual(status, 400)
-        self.assertIn("taken", resp["error"])
-
-    def test_signup_rejects_invalid_handles_and_short_passwords(self):
-        for bad in ("x", "UPPER", "has space", "way-too-long-" + "x" * 20,
-                    "dollar$ign"):
-            status, resp = self.signup(handle=bad)
-            self.assertEqual(status, 400, f"handle {bad!r} accepted")
-        status, resp = self.signup(handle="fine-handle", password="short")
-        self.assertEqual(status, 400)
-        self.assertIn("password", resp["error"].lower())
+        self.assertEqual(profile["user_id"], email)
 
     def test_citizen_locked_out_of_operator_surface(self):
         token, _ = self.citizen()
@@ -212,6 +212,28 @@ class TestSignup(CommunityBase):
         s, _, _ = http_get(self.handler_cls, "/api/community/profile",
                            token=token)
         self.assertEqual(s, 200)
+
+    def test_service_token_principal_rejected_on_community_writes(self):
+        svc = self.runtime.cfaccess.add(
+            "svc-assertion", "svc:mcp-client", "viewer", email="")
+        inter = list(self.runtime.engine.graph.intersections.values())[15]
+        inc = self.make_incident(inter.id)
+        s, resp = http_post(self.handler_cls, "/api/community/comment",
+                            {"incident_id": inc.id, "text": "machine says"},
+                            token=svc)
+        self.assertEqual(s, 400)
+        self.assertIn("service", resp["error"].lower())
+
+    def test_operator_principal_can_comment_per_role_gate_contract(self):
+        # The authz boundary is the role gate, not the AUD: operators are
+        # people with email identities and MAY author community content.
+        inter = list(self.runtime.engine.graph.intersections.values())[16]
+        inc = self.make_incident(inter.id)
+        s, resp = http_post(self.handler_cls, "/api/community/comment",
+                            {"incident_id": inc.id,
+                             "text": "operator context note"},
+                            token=self.op_token)
+        self.assertEqual(s, 200, resp)
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +256,7 @@ class TestProfile(CommunityBase):
         self.assertEqual(profile["radius_m"], 2500)
         self.assertEqual(profile["display_name"], "Night Owl")
         # Survives a fresh hub over the same store (durability, not memory).
-        hub2 = CommunityHub(self.runtime.engine, self.runtime.store,
-                            self.runtime.auth)
+        hub2 = CommunityHub(self.runtime.engine, self.runtime.store)
         self.assertEqual(hub2.get_profile(uid)["radius_m"], 2500)
 
     def test_radius_clamped_to_governed_range(self):
@@ -616,7 +637,7 @@ class TestModeration(CommunityBase):
         # Moderation decision is audit-logged with the operator as actor.
         self.assertTrue(any(
             e["action"] == "community_moderation"
-            and e["actor"] == "op-1"
+            and e["actor"] == "op@city.gov"
             for e in self.runtime.engine.audit.entries(limit=300)))
 
     def test_operator_rejection_keeps_it_unpublished(self):

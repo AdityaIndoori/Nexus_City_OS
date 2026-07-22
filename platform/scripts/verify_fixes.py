@@ -10,7 +10,7 @@ from nexus.engine import (  # noqa: E402
 )
 from nexus.models import (  # noqa: E402
     ActionPlan, ConfidenceBreakdown, IncidentType, OperatingMode,
-    PlanStatus, Provenance, now_ts,
+    PlanStatus, Provenance, Role, now_ts,
 )
 from nexus import bootstrap  # noqa: E402
 from nexus.adapters import SeattleAdapter  # noqa: E402
@@ -26,6 +26,10 @@ def check(name, cond):
 
 
 engine, edge, _ = bootstrap(SeattleAdapter(), use_llm=False)
+with engine._lock:
+    engine.users.update({"op-1": Role.OPERATOR, "admin-1": Role.ADMIN,
+                         "analyst-1": Role.ANALYST,
+                         "viewer-1": Role.VIEWER})
 
 # --- new APIs exist ---
 check("engine.set_confidence_threshold exists",

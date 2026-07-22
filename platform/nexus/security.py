@@ -2,13 +2,10 @@
 Nexus City OS — public-edge security hardening (stdlib only).
 
 When the platform is exposed on the open internet (e.g. via a Cloudflare
-Tunnel), the
-app-logic auth (``nexus.auth``) is necessary but not sufficient. This module
-adds the abuse-prevention controls that matter at the network edge:
+Tunnel), Cloudflare Access handles identity at the edge; this module adds
+the abuse-prevention controls that matter at the origin:
 
-  * IPRateLimiter — token-bucket per client IP, with a stricter bucket for
-    sensitive routes (login). Stops credential-stuffing that rotates
-    usernames to dodge the per-user lockout, and blunts scraping / DoS of
+  * IPRateLimiter — token-bucket per client IP. Blunts scraping / DoS of
     the open GET routes. Returns HTTP 429 with a Retry-After.
   * security_headers() — HSTS, nosniff, frame-deny, a tight CSP for the
     single-file UI, and Referrer-Policy. Applied to every response.
@@ -16,8 +13,6 @@ adds the abuse-prevention controls that matter at the network edge:
     ONLY when the platform is configured behind a trusted proxy (Cloudflare
     Tunnel in front of the origin), otherwise uses the socket peer (prevents IP
     spoofing of the rate limiter when directly exposed).
-  * verify_turnstile() — server-side Cloudflare Turnstile (CAPTCHA)
-    verification for the login path on public deployments.
 
 All pure-stdlib, thread-safe, and unit-testable. Designed as defense in
 depth BEHIND Cloudflare (which provides DDoS/WAF/edge rate limiting); this
@@ -25,32 +20,21 @@ layer ensures the origin is not naked even if traffic bypasses the CDN.
 """
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Dict, Optional, Tuple
 
 # --- configuration (env-overridable so a deployment can tune without code) --
 # General per-IP allowance across all routes.
 RATE_GENERAL_CAPACITY = int(os.environ.get("NEXUS_RATE_GENERAL", "120"))
 RATE_GENERAL_WINDOW_S = float(os.environ.get("NEXUS_RATE_WINDOW", "10"))
-# Stricter bucket for auth/login (credential-stuffing defence).
-RATE_LOGIN_CAPACITY = int(os.environ.get("NEXUS_RATE_LOGIN", "8"))
-RATE_LOGIN_WINDOW_S = float(os.environ.get("NEXUS_RATE_LOGIN_WINDOW", "60"))
 # Max request body accepted (bytes) — guards against memory-DoS.
 MAX_BODY_BYTES = int(os.environ.get("NEXUS_MAX_BODY_BYTES", str(64 * 1024)))
 # Trust proxy headers for the client IP (set true when Cloudflare is in
 # front; false when the origin is directly internet-exposed).
 TRUST_PROXY = os.environ.get("NEXUS_TRUST_PROXY", "1") not in ("0", "false",
                                                                "False", "")
-# Cloudflare Turnstile secret (server-side verification); empty disables it.
-TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
-TURNSTILE_VERIFY_URL = ("https://challenges.cloudflare.com/turnstile/v0/"
-                        "siteverify")
 
 
 def security_headers(csp: bool = True) -> Dict[str, str]:
@@ -96,24 +80,17 @@ def client_ip(headers, peer: str, trust_proxy: bool = TRUST_PROXY) -> str:
 
 class IPRateLimiter:
     """Thread-safe token-bucket rate limiter keyed by client IP.
-
-    Two independent buckets per IP: a general bucket and a stricter login
-    bucket. ``check(ip, login=...)`` returns (allowed, retry_after_s).
-    Idle buckets are pruned lazily to bound memory.
-    """
+    ``check(ip)`` returns (allowed, retry_after_s). Idle buckets are pruned
+    lazily to bound memory."""
 
     def __init__(self,
                  general_capacity: int = RATE_GENERAL_CAPACITY,
-                 general_window_s: float = RATE_GENERAL_WINDOW_S,
-                 login_capacity: int = RATE_LOGIN_CAPACITY,
-                 login_window_s: float = RATE_LOGIN_WINDOW_S) -> None:
+                 general_window_s: float = RATE_GENERAL_WINDOW_S) -> None:
         self.gc = max(1, general_capacity)
         self.gw = max(0.1, general_window_s)
-        self.lc = max(1, login_capacity)
-        self.lw = max(0.1, login_window_s)
         self._lock = threading.RLock()
-        # ip -> {"g": (tokens, last_ts), "l": (tokens, last_ts)}
-        self._buckets: Dict[str, Dict[str, Tuple[float, float]]] = {}
+        # ip -> (tokens, last_ts)
+        self._buckets: Dict[str, Tuple[float, float]] = {}
         self._last_prune = 0.0
 
     def _refill(self, tokens: float, last: float, now: float,
@@ -122,61 +99,31 @@ class IPRateLimiter:
         tokens = min(float(capacity), tokens + (now - last) * rate)
         return tokens, now
 
-    def check(self, ip: str, login: bool = False,
+    def check(self, ip: str,
               now: Optional[float] = None) -> Tuple[bool, float]:
         now = now if now is not None else time.time()
-        cap, win, key = ((self.lc, self.lw, "l") if login
-                         else (self.gc, self.gw, "g"))
         with self._lock:
             self._maybe_prune(now)
-            bucket = self._buckets.setdefault(
-                ip, {"g": (float(self.gc), now), "l": (float(self.lc), now)})
-            tokens, last = bucket[key]
-            tokens, last = self._refill(tokens, last, now, cap, win)
+            tokens, last = self._buckets.setdefault(
+                ip, (float(self.gc), now))
+            tokens, last = self._refill(tokens, last, now, self.gc, self.gw)
             if tokens >= 1.0:
-                bucket[key] = (tokens - 1.0, last)
+                self._buckets[ip] = (tokens - 1.0, last)
                 return True, 0.0
             # Not enough tokens: time until one token refills.
-            retry = (1.0 - tokens) * (win / cap)
-            bucket[key] = (tokens, last)
+            retry = (1.0 - tokens) * (self.gw / self.gc)
+            self._buckets[ip] = (tokens, last)
             return False, round(retry, 2)
 
     def _maybe_prune(self, now: float) -> None:
         if now - self._last_prune < 60.0:
             return
         self._last_prune = now
-        stale = now - max(self.gw, self.lw) * 4
+        stale = now - self.gw * 4
         for ip in list(self._buckets):
-            b = self._buckets[ip]
-            if b["g"][1] < stale and b["l"][1] < stale:
+            if self._buckets[ip][1] < stale:
                 self._buckets.pop(ip, None)
 
     def tracked_ips(self) -> int:
         with self._lock:
             return len(self._buckets)
-
-
-def verify_turnstile(token: str, remote_ip: str = "",
-                     secret: str = TURNSTILE_SECRET,
-                     timeout: float = 4.0) -> bool:
-    """Server-side Cloudflare Turnstile verification. Returns True when
-    Turnstile is disabled (no secret configured) so local/dev runs are
-    unaffected; otherwise validates the client token with Cloudflare."""
-    if not secret:
-        return True                      # disabled → allow (dev/local)
-    if not token:
-        return False
-    data = urllib.parse.urlencode({
-        "secret": secret, "response": token,
-        **({"remoteip": remote_ip} if remote_ip else {}),
-    }).encode("ascii")
-    try:
-        req = urllib.request.Request(TURNSTILE_VERIFY_URL, data=data,
-                                     method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        return bool(payload.get("success"))
-    except (urllib.error.URLError, ValueError, TimeoutError, OSError):
-        # Fail CLOSED on a verification outage for the login path: a CAPTCHA
-        # we can't verify must not be treated as solved.
-        return False

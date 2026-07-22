@@ -440,34 +440,12 @@
          border-left:4px solid var(--yellow); padding:8px 16px;
          display:none; z-index:1200; max-width:70%; font-size:12px;}
 
-  /* -------- login overlay --------------------------------------------- */
-  #loginoverlay{position:fixed; inset:0; background:#0C0E10;
-                display:flex; align-items:center; justify-content:center;
-                z-index:2000;}
-  #loginbox{background:var(--panel); border:1px solid var(--line);
-            border-top:4px solid var(--orange); padding:28px 32px;
-            width:360px;}
-  #loginbox h2{font-size:15px; letter-spacing:1px; color:var(--ink);
-               margin-bottom:4px;}
-  #loginbox .sub{color:var(--dim); font-size:11px; margin-bottom:12px;}
-  #loginbox label{display:block; font-size:10px; color:var(--dim);
-                  margin:12px 0 4px; text-transform:uppercase;
-                  letter-spacing:.5px;}
-  #loginbox input{width:100%; padding:8px; font-size:13px;}
-  #loginbox button{width:100%; margin:16px 0 0; padding:8px;
-                   font-weight:700; letter-spacing:.5px;
-                   text-transform:uppercase;}
-  #loginerr{color:var(--orange); font-size:12px; margin-top:8px;
-            min-height:16px;}
+  /* -------- identity chip --------------------------------------------- */
   .userbadge{font-size:11px; color:var(--dim);}
   .userbadge b{color:var(--ink); font-family:var(--mono);}
   #livedot{display:inline-block; width:8px; height:8px;
            background:var(--dim); margin-right:4px; vertical-align:0;}
   #livedot.on{background:var(--green-t);}
-  .acctchips{display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;}
-  .acctchips button{flex:1; margin:0; padding:4px; font-size:11px;
-                    width:auto; text-transform:none; font-weight:400;}
-  .acctchips button.sel{border-color:var(--yellow); color:var(--yellow);}
 
   /* -------- generic modal ---------------------------------------------- */
   #modal{position:fixed; inset:0; background:rgba(12,14,16,.9);
@@ -530,7 +508,6 @@
     .trow{padding:8px;}
     header h1{font-size:14px;}
     .modebadge,.databadge{font-size:10px; padding:2px 8px;}
-    #loginbox{width:92vw; max-width:360px; padding:20px;}
     .kpis{grid-template-columns:repeat(2,1fr);}
     button{padding:8px 12px;}
     .govact{flex-direction:column;}
@@ -549,29 +526,6 @@
 </style>
 </head>
 <body>
-<div id="loginoverlay" role="dialog" aria-label="Sign in">
-  <div id="loginbox">
-    <h2>NEXUS <span style="color:var(--orange)">CITY OS</span> — SIGN IN</h2>
-    <div class="sub">Traffic Operations Center · sessions are audit-logged</div>
-    <label for="li_user">User ID</label>
-    <input id="li_user" value="" autocomplete="username">
-    <label for="li_pass">Password</label>
-    <input id="li_pass" type="password" value=""
-           autocomplete="current-password">
-
-    <div id="li_turnstile" class="cf-turnstile" style="margin-top:12px"></div>
-    <button class="primary" onclick="doLogin()">Sign in</button>
-    <div id="loginerr" role="alert"></div>
-
-    <div class="sub" style="margin-top:12px;margin-bottom:0">Quick select (demo):</div>
-    <div class="acctchips">
-      <button class="sel" onclick="pickAcct(this,'op-1')">operator</button>
-      <button onclick="pickAcct(this,'admin-1')">admin</button>
-      <button onclick="pickAcct(this,'analyst-1')">analyst</button>
-      <button onclick="pickAcct(this,'viewer-1')">viewer</button>
-    </div>
-  </div>
-</div>
 <div id="modal" role="dialog" aria-modal="true">
   <div id="modalbox">
     <h3 id="modaltitle"></h3>
@@ -716,25 +670,12 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// Cloudflare Turnstile site key — injected by the server from
-// $TURNSTILE_SITE_KEY at request time; empty when CAPTCHA is off. If the
-// placeholder was never substituted (served statically / by an older
-// server), treat it as disabled so login is never blocked by a bogus key.
-const _TS_RAW = "__TURNSTILE_SITE_KEY__";
-const TURNSTILE_SITE_KEY =
-  (_TS_RAW && _TS_RAW.indexOf("TURNSTILE_SITE_KEY") === -1) ? _TS_RAW : "";
-
-// Demo credential pre-fill flag — injected by the server. "1" only when
-// NEXUS_DEMO_PREFILL=1 (local walkthrough convenience); empty on a public
-// deployment, so the login fields ship blank. If the placeholder was never
-// substituted (older/static server), treat it as OFF.
-const _PF_RAW = "__DEMO_PREFILL__";
-const DEMO_PREFILL = _PF_RAW === "1";
-
 // Cloudflare Access (Zero Trust) mode — injected by the server. When "1",
 // sign-in happens entirely at Cloudflare's edge before the app loads: there
 // is NO in-app login form, and identity rides along on the Access cookie of
-// every same-origin request. The placeholder-untouched case is treated OFF.
+// every same-origin request. When falsy (local dev), the server injects a
+// dev identity for every request — still no login UI. The placeholder-
+// untouched case is treated as dev mode.
 const _CFA_RAW = "__CF_ACCESS__";
 const CF_ACCESS = _CFA_RAW === "1";
 const _CFA_LOGOUT_RAW = "__CF_ACCESS_LOGOUT__";
@@ -742,28 +683,6 @@ const CF_ACCESS_LOGOUT =
   (_CFA_LOGOUT_RAW && _CFA_LOGOUT_RAW.indexOf("CF_ACCESS_LOGOUT") === -1)
     ? _CFA_LOGOUT_RAW : "/cdn-cgi/access/logout";
 
-
-
-let turnstileWidgetId = null;
-if(TURNSTILE_SITE_KEY){
-  const s = document.createElement("script");
-  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad";
-  s.async = true; s.defer = true;
-  document.head.appendChild(s);
-  window.onTurnstileLoad = function(){
-    turnstileWidgetId = window.turnstile.render("#li_turnstile",
-      {sitekey: TURNSTILE_SITE_KEY});
-  };
-} else {
-  // CAPTCHA disabled: hide the placeholder so it leaves no empty gap.
-  document.addEventListener("DOMContentLoaded", ()=>{
-    const el = document.getElementById("li_turnstile");
-    if(el) el.style.display = "none";
-  });
-}
-let TOKEN = sessionStorage.getItem("nexus_token") || "";
-
-let SESSION = JSON.parse(sessionStorage.getItem("nexus_session") || "null");
 let grid = null, status_ = null;
 let map = null, interLayer = null, vehLayer = null, emLayer = null,
     segLayer = null;
@@ -826,119 +745,58 @@ function toast(msg){const t=$("toast"); t.textContent=msg;
   t._h=setTimeout(()=>t.style.display="none", 3500);}
 
 async function api(path, body){
-  // In Cloudflare Access mode there is no bearer token — the Access cookie
-  // authenticates every same-origin request automatically.
-  const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
+  // Identity rides on the Cloudflare Access cookie (prod) or a server-
+  // injected dev identity (local) — every same-origin request is
+  // authenticated automatically, so no Authorization header is sent.
   const opts = body!==undefined
-    ? {method:"POST", headers:{...headers,"Content-Type":"application/json"},
+    ? {method:"POST", headers:{"Content-Type":"application/json"},
        body:JSON.stringify(body)}
-    : {headers};
+    : {};
   const r = await fetch(path, opts);
   const data = await r.json();
   if(r.status===401){
-    // Access mode: the edge session expired — bounce through Cloudflare to
-    // re-authenticate (there is no in-app login form to show).
+    // The edge session expired — bounce through Cloudflare (prod) or just
+    // reload (dev, where the server re-injects the identity).
     if(CF_ACCESS){ location.reload(); throw new Error("Re-authenticating…"); }
-    showLogin(); throw new Error(data.error||"Sign in required");
+    location.reload(); throw new Error(data.error||"Session expired");
   }
   if(!r.ok){ throw new Error(data.error || r.statusText); }
   return data;
 }
 
 
-/* ---------- auth ---------- */
-function showLogin(){ document.getElementById("loginoverlay").style.display="flex"; }
-function hideLogin(){ document.getElementById("loginoverlay").style.display="none"; }
-async function doLogin(){
-  const err = $("loginerr"); err.textContent = "";
-  let turnstileToken = "";
-  if(TURNSTILE_SITE_KEY && window.turnstile && turnstileWidgetId!==null){
-    turnstileToken = window.turnstile.getResponse(turnstileWidgetId) || "";
-    if(!turnstileToken){ err.textContent = "Please complete the CAPTCHA."; return; }
-  }
-  try{
-    const r = await fetch("/api/login", {method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({user_id: $("li_user").value.trim(),
-                            password: $("li_pass").value,
-                            turnstile_token: turnstileToken})});
-    const data = await r.json();
-    if(!r.ok){
-      if(TURNSTILE_SITE_KEY && window.turnstile && turnstileWidgetId!==null)
-        window.turnstile.reset(turnstileWidgetId);   // one token per attempt
-      throw new Error(data.error || "Login failed");
-    }
-
-    TOKEN = data.token; SESSION = data;
-    sessionStorage.setItem("nexus_token", TOKEN);
-    sessionStorage.setItem("nexus_session", JSON.stringify(data));
-    hideLogin(); renderUser(); connectEvents(); refresh();
-    toast(`Signed in as ${data.user_id} (${data.role}) — session audit-logged`);
-  }catch(e){ err.textContent = e.message; }
-}
-window.doLogin = doLogin;
+/* ---------- identity ---------- */
+let SESSION = null;
 async function doLogout(){
-  try{ await api("/api/logout", {}); }catch(e){}
-  TOKEN=""; SESSION=null;
-  sessionStorage.removeItem("nexus_token");
-  sessionStorage.removeItem("nexus_session");
-  if(eventSource){ eventSource.close(); eventSource=null; }
-  renderUser(); showLogin();
+  // In Access mode "Sign out" goes through Cloudflare's logout endpoint;
+  // in dev mode there is no logout — just reload.
+  if(CF_ACCESS){ location.href = CF_ACCESS_LOGOUT; return; }
+  location.reload();
 }
 window.doLogout = doLogout;
 function renderUser(){
   if(!SESSION){ $("userbadge").innerHTML = ""; return; }
-  // In Cloudflare Access mode the session is the verified Access identity;
-  // "Sign out" goes through Cloudflare's logout endpoint.
   const signout = CF_ACCESS
     ? `<a style="padding:1px 8px;margin-left:4px" href="${CF_ACCESS_LOGOUT}">Sign out</a>`
-    : `<button style="padding:1px 8px;margin-left:4px" onclick="doLogout()">Sign out</button>`;
-  const via = CF_ACCESS ? " · via Cloudflare Access" : "";
+    : "";
+  const via = CF_ACCESS ? " · via Cloudflare Access" : " · dev";
   $("userbadge").innerHTML =
     `signed in: <b>${SESSION.user_id}</b> (${SESSION.role})${via} ${signout}`;
 }
 
-// Cloudflare Access bootstrap: there is no login form — resolve the verified
-// identity from the Access JWT (server reads it from the request), then start.
-async function bootstrapAccess(){
-  hideLogin();
+// Resolve the verified identity from /api/whoami (server reads it from the
+// Access JWT in prod, or the injected dev identity locally), then start.
+async function bootstrap(){
   try{
     const who = await api("/api/whoami");
     SESSION = {user_id: who.user_id, role: who.role};
     renderUser(); connectEvents(); refresh();
   }catch(e){
-    // api() already reloads through Cloudflare on a 401; nothing else to do.
+    // api() already reloads on a 401; nothing else to do.
   }
 }
-window.bootstrapAccess = bootstrapAccess;
+window.bootstrap = bootstrap;
 
-function pickAcct(btn, uid){
-  $("li_user").value = uid;
-  // Only auto-fill the demo password when the server opted in
-  // (NEXUS_DEMO_PREFILL=1). Otherwise just fill the user ID and let the
-  // operator type the password — nothing is pre-filled on a public deploy.
-  if(DEMO_PREFILL){
-    $("li_pass").value = "nexus-" + uid;
-  } else {
-    $("li_pass").value = "";
-    $("li_pass").focus();
-  }
-  document.querySelectorAll(".acctchips button").forEach(
-    b=>b.classList.toggle("sel", b===btn));
-}
-window.pickAcct = pickAcct;
-// Local-demo convenience: when the server opts in, pre-fill the operator
-// account so a single click signs in. Off by default (public deployments
-// ship blank login fields).
-if(DEMO_PREFILL){
-  document.addEventListener("DOMContentLoaded", ()=>{
-    $("li_user").value = "op-1";
-    $("li_pass").value = "nexus-op-1";
-  });
-}
-
-document.getElementById("li_pass").addEventListener("keydown",
-  e=>{ if(e.key==="Enter") doLogin(); });
 document.getElementById("chatin").addEventListener("keydown",
   e=>{ if(e.key==="Enter") busy($("askbtn"), askCopilot); });
 
@@ -946,7 +804,7 @@ document.getElementById("chatin").addEventListener("keydown",
 let eventSource = null, refreshQueued = false;
 function connectEvents(){
   if(eventSource) eventSource.close();
-  eventSource = new EventSource("/api/events?token="+encodeURIComponent(TOKEN));
+  eventSource = new EventSource("/api/events");
   eventSource.onopen = ()=>{ $("livedot").className="on";
     $("pushstate").textContent="live push"; };
   eventSource.onerror = ()=>{ $("livedot").className="";
@@ -1381,8 +1239,7 @@ async function loadCamFrame(camId, boxId, force){
   info.innerHTML = baseLabel + "<br><span class='spin'></span>" +
     (force ? "refreshing from source…" : "loading frame…");
   try{
-    const r = await fetch(`/api/camera?id=${camId}${force?"&refresh=1":""}`,
-      {headers:{"Authorization":"Bearer "+TOKEN}});
+    const r = await fetch(`/api/camera?id=${camId}${force?"&refresh=1":""}`);
     if(!r.ok) throw new Error("camera unavailable");
     const capturedAt = parseFloat(r.headers.get("X-Captured-At")||"0");
     const blob = await r.blob();
@@ -2036,7 +1893,7 @@ function renderWorkspace(inc){
 
   // W4 camera evidence: FROZEN detection-time frame (what the detector saw)
   if(inc.has_detection_frame){
-    html += `<img class="camthumb" src="/api/incident/frame?id=${encodeURIComponent(inc.id)}&token=${encodeURIComponent(TOKEN)}"
+    html += `<img class="camthumb" src="/api/incident/frame?id=${encodeURIComponent(inc.id)}"
       alt="Detection-time frame for ${esc(name)}" title="Frame captured at detection time — click to expand"
       onclick="this.classList.toggle('expanded')"
       onerror="this.style.display='none'">
@@ -2188,9 +2045,8 @@ window.sendFieldContact = sendFieldContact;
 /* ---------- per-incident JSON evidence report -------------------------- */
 async function exportIncidentReport(incId){
   try{
-    const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
     const r = await fetch("/api/incident/report?id="
-                          + encodeURIComponent(incId), {headers});
+                          + encodeURIComponent(incId));
     if(!r.ok){
       const d = await r.json().catch(()=>({}));
       throw new Error(d.error || r.statusText);
@@ -2413,8 +2269,7 @@ window.showInstruction=showInstruction;
 // for other roles.
 async function exportAudit(){
   try{
-    const headers = CF_ACCESS ? {} : {"Authorization": "Bearer "+TOKEN};
-    const r = await fetch("/api/audit/export", {headers});
+    const r = await fetch("/api/audit/export");
     if(!r.ok){
       const d = await r.json().catch(()=>({}));
       throw new Error(d.error || r.statusText);
@@ -3085,16 +2940,11 @@ renderUser();
 renderNotifToggle();
 renderAudioBtn();
 
-if(CF_ACCESS){
-  // Cloudflare Access handled sign-in at the edge — no in-app login.
-  bootstrapAccess();
-} else if(TOKEN){
-  hideLogin(); connectEvents(); refresh();
-} else {
-  showLogin();
-}
+// No in-app login: identity comes from the Cloudflare Access session (prod)
+// or a server-injected dev identity (local). Resolve it and start.
+bootstrap();
 // Fallback poll (slow) in case SSE drops; SSE handles real-time updates.
-setInterval(()=>{ if(CF_ACCESS || TOKEN) refresh(); }, 15000);
+setInterval(()=>{ refresh(); }, 15000);
 
 </script>
 </body>

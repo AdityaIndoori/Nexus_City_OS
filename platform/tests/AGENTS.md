@@ -11,17 +11,17 @@ unittest-only suite (163 tests, 14 files), zero network, zero pip; run `python -
 | Mode ladder, HITL, rollback, RBAC | test_engine.py |
 | MUTCD R1–R7, H1–H4, abstention | test_safety.py |
 | Speed probes / congestion math | test_congestion.py |
-| CF Access JWT (pure-Python RSA keygen, seeded) | test_cfaccess.py |
-| Store durability, auth, lockout | test_production.py |
+| CF Access JWT (pure-Python RSA keygen, seeded) | test_cfaccess.py + helpers_cfaccess.py |
+| Store durability, CF-only identity, event hub | test_production.py |
 | Feed parsers (pure data, no sys.path) | test_datafeeds.py |
-| Rate limit, body cap, Turnstile | test_security.py |
+| Rate limit, client IP, headers | test_security.py |
 | Adapter SDK proof | test_tacoma.py |
 
 ## CONVENTIONS
 
 - Import boilerplate (all except test_datafeeds/test_security): `sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))` then `from nexus import ...`.
 - Canonical factory: `bootstrap(SeattleAdapter(seed=42))` → (engine, edge, adapter), quiescent. Drive manually: `edge.inject_scenario()` / `edge.tick()` / `engine.recommend()`. **Never start the background tick loop.** LLM tests: `use_llm=True` then mock.
-- Helpers are module-level factories (`make_platform()`, `detect_incident()`, `make_plan()`, ...), not setUp. setUp only for per-class shared resources (`Store(":memory:")` + Authenticator).
+- Helpers are module-level factories (`make_platform()`, `detect_incident()`, `make_plan()`, ...), not setUp. setUp only for per-class shared resources (`Store(":memory:")`). Identity helpers: `helpers_auth.seed_demo_users(engine)` + `helpers_auth.StubAccess` (handler tests); real RS256 JWTs via `helpers_cfaccess._Signer`.
 - Network isolation, pick one: stub class on `adapter.live`; `mock.patch("nexus.livedata._fetch_json")`; `mock.patch.object(engine.copilot.llm, "chat", side_effect=LLMUnavailable)`; direct attr monkey-patch with finally-restore.
 - Store: `:memory:` default; file-based only for durability tests — prefix `_t_`, clean up `-wal`/`-shm` in finally.
 - Naming: `test_<domain>.py` / `Test<Concept>` / `test_<what_and_outcome>` (e.g. `test_shadow_mode_logs_but_never_executes`); fakes PascalCase.

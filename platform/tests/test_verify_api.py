@@ -8,7 +8,9 @@ intersection still gets full R1-R5 results); malformed JSON vs empty plan
 + chain-membership verification (valid / tampered / unknown cert_id).
 
 Handlers are exercised fully in-process (no sockets, no network): the
-make_handler() class is driven with raw HTTP bytes over BytesIO.
+make_handler() class is driven with raw HTTP bytes over BytesIO. Identity
+is Cloudflare Access only — the runtime carries a StubAccess whose verify()
+resolves canned principals for chosen assertion strings.
 """
 from __future__ import annotations
 
@@ -23,8 +25,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nexus import bootstrap
 from nexus.adapters import SeattleAdapter
-from nexus.auth import Authenticator
-from nexus.cfaccess import CloudflareAccess
 from nexus.models import (
     ActionPlan,
     ConfidenceBreakdown,
@@ -37,6 +37,7 @@ from nexus.models import (
 from nexus.security import IPRateLimiter
 from nexus.server import make_handler
 from nexus.store import Store
+from tests.helpers_auth import StubAccess
 
 
 class FakeRuntime:
@@ -46,15 +47,15 @@ class FakeRuntime:
         self.store = Store(":memory:")
         self.engine, self.edge, self.adapter = bootstrap(
             SeattleAdapter(seed=42), self.store)
-        self.auth = Authenticator(self.store)
-        self.cfaccess = CloudflareAccess.from_env()
+        self.cfaccess = StubAccess()
+        self.dev_identity = None
         self.ratelimit = IPRateLimiter()
 
 
 def http_post(handler_cls, path, raw_body, token=None):
     lines = [f"POST {path} HTTP/1.1", "Host: test"]
     if token:
-        lines.append(f"Authorization: Bearer {token}")
+        lines.append(f"Cf-Access-Jwt-Assertion: {token}")
     lines.append("Content-Type: application/json")
     lines.append(f"Content-Length: {len(raw_body)}")
     request = ("\r\n".join(lines) + "\r\n\r\n").encode("ascii") + raw_body
@@ -98,7 +99,8 @@ class VerifyApiBase(unittest.TestCase):
     def setUpClass(cls):
         cls.runtime = FakeRuntime()
         cls.handler_cls = make_handler(cls.runtime)
-        cls.token = cls.runtime.auth.login("op-1", "nexus-op-1")["token"]
+        cls.token = cls.runtime.cfaccess.add(
+            "op-assertion", "op-1", "operator")
 
     def post(self, path, body, token="use-default"):
         tok = self.token if token == "use-default" else token

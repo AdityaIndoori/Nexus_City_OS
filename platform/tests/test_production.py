@@ -1,11 +1,11 @@
 """
-Production-hardening tests: persistence, auth, durability, event hub.
+Production-hardening tests: persistence, identity, durability, event hub.
 
-Proves the Phase 1+2 guarantees:
+Proves the production guarantees:
   * The audit chain survives a process restart, intact.
   * Governance state (operating mode, confidence threshold) is restored.
-  * Credentials are PBKDF2-verified; bad passwords / lockout / token
-    forgery / expiry / revocation are all rejected.
+  * Identity is Cloudflare Access ONLY: real minted RS256 JWTs resolve
+    citizen-mapped and service-token principals; forgeries are rejected.
   * The engine event hub wakes waiters on state change.
 """
 from __future__ import annotations
@@ -18,10 +18,12 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nexus.audit import AuditTrail
-from nexus.auth import AuthError, Authenticator
+from nexus.cfaccess import AccessError, CloudflareAccess
 from nexus.engine import NexusEngine
 from nexus.models import OperatingMode
 from nexus.store import Store
+from tests.helpers_auth import seed_demo_users
+from tests.helpers_cfaccess import _Signer
 
 
 class TestDurableAudit(unittest.TestCase):
@@ -69,6 +71,7 @@ class TestGovernancePersistence(unittest.TestCase):
     def test_mode_restored_after_restart(self):
         store = Store(":memory:")
         engine = NexusEngine(store=store)
+        seed_demo_users(engine)
         engine.set_mode("admin-1", OperatingMode.ADVISORY)
         # same store, new engine ⇒ simulated restart
         engine2 = NexusEngine(store=store)
@@ -79,87 +82,52 @@ class TestGovernancePersistence(unittest.TestCase):
         self.assertEqual(engine.mode, OperatingMode.SHADOW)
 
 
-class TestAuth(unittest.TestCase):
+TEAM = "nexus-team.cloudflareaccess.com"
+AUD = "abc123def456aud"
+
+
+class TestCloudflareAccessIdentity(unittest.TestCase):
+    """CF Access is the ONLY identity layer: end-to-end principal
+    resolution with real minted RS256 JWTs."""
+
     def setUp(self):
-        self.store = Store(":memory:")
-        self.auth = Authenticator(self.store, secret=b"t" * 32)
+        self.signer = _Signer()
+        self.cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            role_map={"neighbor@example.com": "citizen",
+                      "chief@city.gov": "admin"},
+            default_role="viewer",
+            service_roles={"mcp-client-id": "analyst"},
+            fetcher=lambda url: self.signer.jwks_bytes())
 
-    def test_login_returns_role_and_valid_token(self):
-        session = self.auth.login("op-1", "nexus-op-1")
-        self.assertEqual(session["role"], "operator")
-        payload = self.auth.verify_token(session["token"])
-        self.assertEqual(payload["sub"], "op-1")
+    def _jwt(self, **kw):
+        kw.setdefault("iss", f"https://{TEAM}")
+        kw.setdefault("aud", AUD)
+        return self.signer.make_jwt(**kw)
 
-    def test_env_password_override_reconciled_on_existing_user(self):
-        # The default account already exists in the store; a NEW
-        # Authenticator with an env override must REPLACE the password
-        # (rotation-safe across a persisted-DB redeploy).
-        import os
-        os.environ["NEXUS_PASSWORD_OP_1"] = "rotated-secret"
-        try:
-            auth2 = Authenticator(self.store, secret=b"t" * 32)
-            with self.assertRaises(AuthError):
-                auth2.login("op-1", "nexus-op-1")   # old default gone
-            self.assertEqual(
-                auth2.login("op-1", "rotated-secret")["role"], "operator")
-        finally:
-            del os.environ["NEXUS_PASSWORD_OP_1"]
+    def test_citizen_mapped_email_verifies_to_citizen_role(self):
+        p = self.cfa.verify(self._jwt(email="neighbor@example.com"))
+        self.assertEqual(p["sub"], "neighbor@example.com")
+        self.assertEqual(p["role"], "citizen")
 
-    def test_disable_demo_accounts_env(self):
-        import os
-        os.environ["NEXUS_DISABLE_DEMO_ACCOUNTS"] = "1"
-        try:
-            fresh = Store(":memory:")
-            auth2 = Authenticator(fresh, secret=b"t" * 32)
-            with self.assertRaises(AuthError):
-                auth2.login("op-1", "nexus-op-1")   # never seeded
-        finally:
-            del os.environ["NEXUS_DISABLE_DEMO_ACCOUNTS"]
+    def test_service_token_maps_to_svc_principal_with_configured_role(self):
+        p = self.cfa.verify(self._jwt(email="",
+                                      common_name="mcp-client-id"))
+        self.assertEqual(p["sub"], "svc:mcp-client-id")
+        self.assertEqual(p["email"], "")
+        self.assertEqual(p["role"], "analyst")
 
-    def test_wrong_password_rejected(self):
-        with self.assertRaises(AuthError):
-            self.auth.login("op-1", "wrong")
+    def test_unmapped_service_token_defaults_to_viewer(self):
+        p = self.cfa.verify(self._jwt(email="", common_name="rando-svc"))
+        self.assertEqual(p["sub"], "svc:rando-svc")
+        self.assertEqual(p["role"], "viewer")
 
-
-    def test_unknown_user_rejected(self):
-        with self.assertRaises(AuthError):
-            self.auth.login("ghost", "x")
-
-    def test_lockout_after_failures(self):
-        for _ in range(5):
-            try:
-                self.auth.login("op-1", "wrong")
-            except AuthError:
-                pass
-        with self.assertRaises(AuthError) as ctx:
-            self.auth.login("op-1", "nexus-op-1")  # correct pw, but locked
-        self.assertIn("locked", str(ctx.exception).lower())
-
-    def test_forged_token_rejected(self):
-        session = self.auth.login("op-1", "nexus-op-1")
-        body, sig = session["token"].split(".", 1)
-        with self.assertRaises(AuthError):
-            self.auth.verify_token(body + "." + sig[:-2] + "xx")
-        # tampered payload (role escalation attempt)
-        import base64, json
-        raw = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-        raw["role"] = "admin"
-        forged_body = base64.urlsafe_b64encode(
-            json.dumps(raw, sort_keys=True).encode()).rstrip(b"=").decode()
-        with self.assertRaises(AuthError):
-            self.auth.verify_token(forged_body + "." + sig)
-
-    def test_revoked_token_rejected(self):
-        session = self.auth.login("op-1", "nexus-op-1")
-        self.auth.revoke_token(session["token"])
-        with self.assertRaises(AuthError):
-            self.auth.verify_token(session["token"])
-
-    def test_password_hashes_are_salted(self):
-        self.auth.create_user("a", "viewer", "same-password")
-        self.auth.create_user("b", "viewer", "same-password")
-        ua, ub = self.store.get_user("a"), self.store.get_user("b")
-        self.assertNotEqual(ua["pw_hash"], ub["pw_hash"])  # unique salts
+    def test_forged_token_from_unknown_key_rejected(self):
+        rogue = _Signer(kid="rogue-kid")
+        forged = rogue.make_jwt(iss=f"https://{TEAM}", aud=AUD,
+                                email="chief@city.gov")
+        with self.assertRaises(AccessError):
+            self.cfa.verify(forged)
 
 
 class TestEventHub(unittest.TestCase):
@@ -181,6 +149,7 @@ class TestEventHub(unittest.TestCase):
 
     def test_state_changes_bump_event_seq(self):
         engine = NexusEngine(store=Store(":memory:"))
+        seed_demo_users(engine)
         before = engine.event_seq
         engine.set_mode("admin-1", OperatingMode.ADVISORY)
         self.assertGreater(engine.event_seq, before)

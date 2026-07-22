@@ -107,13 +107,9 @@ class NexusEngine:
         self.plans: Dict[str, ActionPlan] = {}
         self.feed_last_update: Dict[str, float] = {}
         self.alerts: List[Dict[str, Any]] = []
-        # users: user_id -> role (reference impl; production uses SSO+MFA)
-        self.users: Dict[str, Role] = {
-            "op-1": Role.OPERATOR,
-            "analyst-1": Role.ANALYST,
-            "admin-1": Role.ADMIN,
-            "viewer-1": Role.VIEWER,
-        }
+        # users: user_id -> role. Populated by the server per-request from
+        # the verified Cloudflare Access principal (under self._lock).
+        self.users: Dict[str, Role] = {}
         # rollback monitoring: plan_id -> baseline congestion per intersection
         self._monitoring: Dict[str, Dict[str, Any]] = {}
         # Optional hook the runtime sets so the engine can freeze a

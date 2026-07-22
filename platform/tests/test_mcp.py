@@ -18,10 +18,13 @@ from nexus.adapters import SeattleAdapter
 from nexus.engine import PermissionDenied
 from nexus.mcp import handle_mcp
 from nexus.models import IncidentType, Role
+from tests.helpers_auth import seed_demo_users
 
 
 def make_platform():
-    return bootstrap(SeattleAdapter(seed=42))
+    engine, edge, adapter = bootstrap(SeattleAdapter(seed=42))
+    seed_demo_users(engine)
+    return engine, edge, adapter
 
 
 def _principal(role: str, user_id: str = None) -> dict:
