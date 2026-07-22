@@ -492,7 +492,7 @@ class CommunityHub:
         status = "rejected"
         if decision == "approve":
             status = "verified"
-            analysis = {"assessment": f"operator-approved by {operator_id}",
+            analysis = {"assessment": "verified by a city operator",
                         "confidence_pct": None}
             if report["kind"] == "confirm":
                 inc = self._engine.graph.incidents.get(incident_id or "")

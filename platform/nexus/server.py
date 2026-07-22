@@ -98,10 +98,6 @@ DEFAULT_DB = _os.environ.get(
     str(Path(__file__).resolve().parent.parent / "data" / "nexus.db"))
 
 
-# Routes that do not require a verified identity.
-PUBLIC_ROUTES = {"/", "/index.html", "/healthz",
-                 "/landing", "/landing/", "/community", "/community/"}
-
 # Community photo uploads ride in JSON bodies (base64 jpeg) — allow a
 # larger body on exactly those two routes; everything else keeps the
 # tight default cap.

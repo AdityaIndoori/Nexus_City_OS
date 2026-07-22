@@ -194,8 +194,9 @@ class CloudflareAccess:
                 doc = json.loads(raw)
                 keys = {}
                 for k in doc.get("keys", []):
-                    if k.get("kty") == "RSA" and "n" in k and "e" in k:
-                        keys[k.get("kid", "")] = {
+                    if k.get("kty") == "RSA" and "n" in k and "e" in k \
+                            and k.get("kid"):
+                        keys[k["kid"]] = {
                             "n": _int_from_b64url(k["n"]),
                             "e": _int_from_b64url(k["e"])}
                 if keys:
@@ -252,7 +253,7 @@ class CloudflareAccess:
             raise AccessError("Access assertion issuer mismatch.")
         aud = payload.get("aud", [])
         aud_list = aud if isinstance(aud, list) else [aud]
-        if not (self.auds & set(aud_list)):
+        if not (self.auds & {str(a) for a in aud_list}):
             raise AccessError("Access assertion audience mismatch.")
 
         email = (payload.get("email")
@@ -267,6 +268,10 @@ class CloudflareAccess:
                     "exp": float(payload.get("exp", now))}
         if not email:
             raise AccessError("Access assertion has no identity.")
+        if "@" not in email:
+            # Only a verified email mints a human principal; a bare sub
+            # (uuid, opaque id) must not fall through to a role-mapped user.
+            raise AccessError("Access assertion identity is not an email.")
         return {"sub": email, "email": email,
                 "role": self.role_for(email),
                 "exp": float(payload.get("exp", now))}

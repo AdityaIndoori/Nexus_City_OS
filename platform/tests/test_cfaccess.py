@@ -104,6 +104,81 @@ class CloudflareAccessTests(unittest.TestCase):
         with self.assertRaises(AccessError):
             CloudflareAccess().verify(self._jwt())
 
+    def test_service_token_maps_to_svc_principal(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            service_roles={"cid.access": "operator"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="cid.access"))
+        self.assertEqual(p["sub"], "svc:cid.access")
+        self.assertEqual(p["email"], "")
+        self.assertEqual(p["role"], "operator")
+
+    def test_service_token_unmapped_defaults_viewer(self):
+        p = self.cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="unknown.access"))
+        self.assertEqual(p["role"], "viewer")
+
+    def test_service_role_never_citizen(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            service_roles={"cid.access": "citizen"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="cid.access"))
+        self.assertEqual(p["role"], "viewer")
+
+    def test_bare_sub_without_email_rejected(self):
+        # No email/common_name — a bare opaque sub must NOT mint a human.
+        with self.assertRaises(AccessError):
+            self.cfa.verify(self.signer.make_jwt(
+                iss=f"https://{TEAM}", aud=AUD, sub="opaque-user-uuid"))
+
+    def test_non_string_aud_rejected_cleanly(self):
+        # aud as a dict/int must raise AccessError, never a TypeError/500.
+        for weird in ({"x": 1}, 123):
+            with self.assertRaises(AccessError):
+                self.cfa.verify(self.signer.make_jwt(
+                    iss=f"https://{TEAM}", aud=weird, email="op@city.gov"))
+
+    def test_multi_aud_accepts_any_configured(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud="console-aud, community-aud",
+            role_map={"op@city.gov": "operator"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        # token minted for the community app is still accepted (role is the
+        # authz boundary, not the AUD).
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud="community-aud", email="op@city.gov"))
+        self.assertEqual(p["role"], "operator")
+
+    def test_citizen_role_mapping(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            role_map={"resident@x.com": "citizen"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, email="resident@x.com"))
+        self.assertEqual(p["role"], "citizen")
+
+    def test_jwks_entry_without_kid_ignored(self):
+        # A JWKS key with no kid must not create a ""-keyed match that a
+        # kid-less token could exploit.
+        signer = self.signer
+
+        def kidless_jwks(url):
+            import json as _j
+            doc = _j.loads(signer.jwks_bytes())
+            doc["keys"][0].pop("kid", None)
+            return _j.dumps(doc).encode()
+        cfa = CloudflareAccess(team_domain=TEAM, aud=AUD,
+                               fetcher=kidless_jwks)
+        with self.assertRaises(AccessError):
+            cfa.verify(signer.make_jwt(
+                iss=f"https://{TEAM}", aud=AUD, email="op@city.gov", kid=""))
+
+
     def test_from_env(self):
         import os
         keys = ["NEXUS_CF_ACCESS_TEAM_DOMAIN", "NEXUS_CF_ACCESS_AUD",

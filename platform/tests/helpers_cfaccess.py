@@ -92,12 +92,16 @@ class _Signer:
             "kty": "RSA", "kid": self.kid, "alg": "RS256", "use": "sig",
             "n": _int_b64u(self.n), "e": _int_b64u(self.e)}]}).encode()
 
-    def make_jwt(self, *, iss, aud, email, exp=None, kid=None, alg="RS256",
-                 common_name=None):
+    def make_jwt(self, *, iss, aud, email=None, exp=None, kid=None,
+                 alg="RS256", common_name=None, sub=None):
         now = time.time()
         header = {"alg": alg, "kid": kid or self.kid, "typ": "JWT"}
-        payload = {"iss": iss, "aud": aud, "email": email,
+        payload = {"iss": iss, "aud": aud,
                    "iat": now, "exp": exp if exp is not None else now + 600}
+        if email is not None:
+            payload["email"] = email
+        if sub is not None:
+            payload["sub"] = sub
         if common_name is not None:
             payload["common_name"] = common_name
         h = _b64u(json.dumps(header).encode())
