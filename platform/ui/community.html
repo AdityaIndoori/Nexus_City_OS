@@ -47,19 +47,6 @@
 
   .wrap{max-width:640px; margin:0 auto; padding:16px;}
 
-  /* auth card */
-  .authcard{background:var(--panel); border:1px solid var(--line);
-            border-top:4px solid var(--green); padding:24px; margin-top:8vh;}
-  .authcard h2{font-size:18px; margin-bottom:4px;}
-  .authcard .sub{color:var(--dim); font-size:13px; margin-bottom:8px;}
-  .tabs{display:flex; border-bottom:1px solid var(--line); margin:12px 0;}
-  .tabs span{padding:8px 16px; cursor:pointer; color:var(--dim);
-             font-size:13px; font-weight:700; text-transform:uppercase;
-             letter-spacing:.5px; border-bottom:2px solid transparent;}
-  .tabs span.on{color:var(--ink); border-bottom-color:var(--green);}
-  .err{color:var(--orange); font-size:13px; min-height:18px; margin-top:8px;}
-  .ok{color:var(--green-t); font-size:13px;}
-
   /* map + feed */
   #map{height:300px; border:1px solid var(--line); background:#1A1E23;}
   .leaflet-container{background:#1A1E23;}
@@ -146,31 +133,7 @@
   <span class="who" id="who"></span>
 </header>
 
-<div class="wrap" id="authview">
-  <div class="authcard">
-    <h2>Your streets. Your eyes. Verified.</h2>
-    <div class="sub">Get alerted to collisions, fires and 911 activity near
-      you — and help your city respond faster by confirming what you see.
-      Every photo is checked by AI vision before anything is published.</div>
-    <div class="tabs">
-      <span id="tab_up" class="on" onclick="setAuthTab('up')">Sign up</span>
-      <span id="tab_in" onclick="setAuthTab('in')">Sign in</span>
-    </div>
-    <label for="a_user">User ID (lowercase, 3–24 chars)</label>
-    <input id="a_user" autocomplete="username" placeholder="e.g. jane-doe">
-    <div id="dn_row">
-      <label for="a_name">Display name (shown on your reports)</label>
-      <input id="a_name" placeholder="e.g. Jane D.">
-    </div>
-    <label for="a_pass">Password (8+ characters)</label>
-    <input id="a_pass" type="password" autocomplete="new-password">
-    <button class="hot" style="width:100%;margin-top:16px"
-            onclick="doAuth()" id="authbtn">Create account</button>
-    <div class="err" id="autherr" role="alert"></div>
-  </div>
-</div>
-
-<div class="wrap" id="appview" style="display:none">
+<div class="wrap" id="appview">
   <div class="repbar">
     <span>Reputation <b id="rep">0</b></span>
     <span>Verified <b id="repv">0</b></span>
@@ -227,67 +190,41 @@ function ago(ts){const s=Math.max(0,Math.round(Date.now()/1000-ts));
   return Math.floor(s/3600)+"h "+Math.floor((s%3600)/60)+"m ago";}
 function fmtDist(m){return m<950?Math.round(m)+" m":(m/1000).toFixed(1)+" km";}
 
-let TOKEN=sessionStorage.getItem("ncw_token")||"";
-let ME=JSON.parse(sessionStorage.getItem("ncw_me")||"null");
 let profile=null, feed=[], selId=null, map=null, markers=[], homeMarker=null,
     radiusCircle=null, notified=new Set(), myPos=null;
 
 async function api(path,body){
+  // Identity rides on the Cloudflare Access cookie automatically — no
+  // Authorization header. Same-origin requests carry CF_Authorization.
   const opts=body!==undefined
-    ?{method:"POST",headers:{"Authorization":"Bearer "+TOKEN,
-      "Content-Type":"application/json"},body:JSON.stringify(body)}
-    :{headers:{"Authorization":"Bearer "+TOKEN}};
+    ?{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(body)}
+    :{};
   const r=await fetch(path,opts);
   const d=await r.json().catch(()=>({}));
-  if(r.status===401){signOut();throw new Error("Please sign in again.");}
+  if(r.status===401){noAccess();throw new Error("No community access.");}
   if(!r.ok)throw new Error(d.error||r.statusText);
   return d;
 }
 
-/* ---------- auth ---------- */
-let authMode="up";
-function setAuthTab(m){authMode=m;
-  $("tab_up").classList.toggle("on",m==="up");
-  $("tab_in").classList.toggle("on",m==="in");
-  $("dn_row").style.display=m==="up"?"":"none";
-  $("authbtn").textContent=m==="up"?"Create account":"Sign in";}
-window.setAuthTab=setAuthTab;
-async function doAuth(){
-  $("autherr").textContent="";
-  try{
-    let s;
-    if(authMode==="up"){
-      const r=await fetch("/api/community/signup",{method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({user_id:$("a_user").value.trim(),
-          password:$("a_pass").value,
-          display_name:$("a_name").value.trim()})});
-      s=await r.json();if(!r.ok)throw new Error(s.error||"Signup failed");
-    }else{
-      const r=await fetch("/api/login",{method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({user_id:$("a_user").value.trim(),
-          password:$("a_pass").value})});
-      s=await r.json();if(!r.ok)throw new Error(s.error||"Sign-in failed");
-    }
-    TOKEN=s.token;ME={user_id:s.user_id,role:s.role};
-    sessionStorage.setItem("ncw_token",TOKEN);
-    sessionStorage.setItem("ncw_me",JSON.stringify(ME));
-    enterApp();
-  }catch(e){$("autherr").textContent=e.message;}
+/* ---------- identity ---------- */
+// Behind Cloudflare Access the session is always present; a 401 means this
+// account has no community access (shouldn't happen behind the Access app).
+function noAccess(){
+  $("appview").style.display="none";
+  $("who").textContent="";
+  document.body.insertAdjacentHTML("beforeend",
+    `<div class="wrap"><div class="empty" style="margin-top:8vh">Your account
+      has no community access.</div></div>`);
 }
-window.doAuth=doAuth;
-function signOut(){TOKEN="";ME=null;
-  sessionStorage.removeItem("ncw_token");sessionStorage.removeItem("ncw_me");
-  $("appview").style.display="none";$("authview").style.display="";
-  $("who").textContent="";}
+function signOut(){ location.href="/cdn-cgi/access/logout"; }
 window.signOut=signOut;
 
 /* ---------- app ---------- */
 async function enterApp(){
-  $("authview").style.display="none";$("appview").style.display="";
   profile=await api("/api/community/profile");
-  $("who").innerHTML=`<b>${esc(profile.display_name)}</b> · citizen`;
+  const who=await api("/api/whoami");
+  $("who").innerHTML=`<b>${esc(profile.display_name)}</b> · ${esc(who.role)}`;
   $("rep").textContent=profile.reputation;
   $("repv").textContent=profile.reports_verified;
   initMap();
@@ -360,7 +297,7 @@ window.toggleNotify=toggleNotify;
 let sse=null;
 function connectSSE(){
   if(sse)sse.close();
-  sse=new EventSource("/api/events?token="+encodeURIComponent(TOKEN));
+  sse=new EventSource("/api/events");
   let queued=false;
   sse.onmessage=()=>{if(queued)return;queued=true;
     setTimeout(()=>{queued=false;refreshFeed();},600);};
@@ -453,7 +390,7 @@ async function openDetail(id,soft){
       <div class="cchip"><span class="nm">✓ ${esc(c.display_name)}</span>
         <span class="tm">${ago(c.at)}</span>
         ${c.note?`<div>${esc(c.note)}</div>`:""}
-        <img src="/api/community/photo?id=${c.report_id}&token=${encodeURIComponent(TOKEN)}"
+        <img src="/api/community/photo?id=${c.report_id}"
              style="max-width:100%;max-height:160px;margin-top:6px;border:1px solid var(--line)"
              loading="lazy" onerror="this.style.display='none'">
       </div>`).join("")}
@@ -633,7 +570,9 @@ async function refreshProfile(){
   }catch(e){}
 }
 
-if(TOKEN&&ME){enterApp();}
+// Behind Cloudflare Access the identity is always present — boot straight
+// into the feed. A 401 (no community access) is surfaced by api()/noAccess().
+enterApp();
 </script>
 </body>
 </html>

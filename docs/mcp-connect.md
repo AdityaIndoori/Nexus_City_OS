@@ -6,24 +6,40 @@
 
 ## Authentication
 
-**Bearer token in the `Authorization` header — no exceptions.**
+Identity comes solely from **Cloudflare Access** — there is no
+`/api/login`, no bearer tokens issued by the origin.
 
-```
-Authorization: Bearer <token>
-```
+- **Browser clients** (a human who already signed in at Cloudflare's edge):
+  the `CF_Authorization` cookie set by Access is sent automatically on every
+  request, including `/mcp`.
+- **Machine / MCP clients** (no browser session): authenticate with a
+  Cloudflare Access **service token** instead — send the
+  `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers on every
+  request. The edge validates the token and forwards a signed Access JWT to
+  the origin exactly as it would for a human login; `nexus/cfaccess.py`
+  verifies it the same way either path.
 
-**Never** use `?token=` query parameters. Query strings land in access logs,
-proxy logs, and browser history. The server rejects unauthenticated requests
-with HTTP 401 before the MCP handler is reached.
+Service-token principals appear as `svc:<client-id>` and get the role from
+`NEXUS_CF_ACCESS_SERVICE_ROLES` (default `viewer`; never `citizen`).
+`get_audit` still requires `analyst` or `admin` — map the service token's
+client ID to one of those roles if the MCP client needs audit access.
 
-Tokens are issued by `POST /api/login` (8-hour TTL, in-memory revocation on
-logout). For investor demos, use a scoped viewer token; full-trust analyst
-tokens unlock `get_audit`.
+**Never** use `?token=` query parameters — the origin has no such fallback.
+Image (`/api/camera`) and SSE (`/api/events`) URLs are **cookie-auth only**:
+they take the `CF_Authorization` cookie from a browser session, not the
+`CF-Access-Client-Id`/`Secret` headers, so they are not reachable by
+header-only machine clients.
 
-External investor access: Cloudflare Access config (separate Access app scoped
-to `/mcp` + per-investor short-lived service token) — no code change required.
+External investor / read-only access: a separate Access application scoped
+to `/mcp` with its own policy (per-investor short-lived service token, or an
+email-OTP Allow policy) — no code change required. See
+`CLOUDFLARE_ACCESS_SETUP.md`.
 
 ## Claude / MCP client config
+
+For a browser-based client that has already completed the Access login,
+no extra config is needed beyond the cookie jar. For a machine client
+using a service token:
 
 ```json
 {
@@ -31,14 +47,13 @@ to `/mcp` + per-investor short-lived service token) — no code change required.
     "nexus-city-os": {
       "url": "https://nexus.aindoori.com/mcp",
       "headers": {
-        "Authorization": "Bearer <your-token>"
+        "CF-Access-Client-Id": "<client-id>.access",
+        "CF-Access-Client-Secret": "<client-secret>"
       }
     }
   }
 }
 ```
-
-Replace `<your-token>` with a token obtained from `POST /api/login`.
 
 ## Tools
 
@@ -104,10 +119,16 @@ approval queue — it does NOT mean it was approved or executed. Every real
 action still requires human approval (`requires_human_approval` is constant
 `True`).
 
-## Token notes
+## Notes
 
-- TTL: 8 hours (fixed, no config knob)
-- Revocation: in-memory on logout; lost on server restart
-- Rotation: re-login to get a fresh token
-- For production / investor CI: Cloudflare Access service tokens are preferred
-  (issued by Zero Trust dashboard, short-lived, scoped to `/mcp`)
+- TTL: whatever the Access application's session duration is set to
+  (browser cookie) or the service token's expiry (Zero Trust dashboard) —
+  not a Nexus-origin concept.
+- Revocation: revoke the service token or remove the user from the Access
+  policy in the Zero Trust dashboard; the origin trusts the JWT until it
+  expires.
+- Rotation: re-authenticate (browser) or rotate the service token's secret
+  (Zero Trust dashboard); no origin-side rotation step.
+- Service tokens are the standard machine-client path for production / CI /
+  investor access — see `CLOUDFLARE_ACCESS_SETUP.md` for creating one and
+  mapping it to a role.

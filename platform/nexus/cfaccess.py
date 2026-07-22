@@ -23,13 +23,24 @@ Pure-stdlib RS256:
 
 Configuration (all via env; presence of the first two ENABLES Access-only mode):
   * ``NEXUS_CF_ACCESS_TEAM_DOMAIN``  e.g. ``myteam.cloudflareaccess.com``
-  * ``NEXUS_CF_ACCESS_AUD``          the Access Application Audience (AUD) tag
+  * ``NEXUS_CF_ACCESS_AUD``          Access Application Audience tag(s) —
+                                     comma-separated when the hostname carries
+                                     several path-scoped Access apps (console
+                                     root + /community)
   * ``NEXUS_CF_ACCESS_ADMINS``       comma-separated admin emails        (optional)
   * ``NEXUS_CF_ACCESS_OPERATORS``    comma-separated operator emails      (optional)
   * ``NEXUS_CF_ACCESS_ANALYSTS``     comma-separated analyst emails       (optional)
   * ``NEXUS_CF_ACCESS_VIEWERS``      comma-separated viewer emails        (optional)
+  * ``NEXUS_CF_ACCESS_CITIZENS``     comma-separated civilian emails      (optional)
   * ``NEXUS_CF_ACCESS_DEFAULT_ROLE`` role for an authenticated, unmapped
                                      email (default ``viewer``)
+  * ``NEXUS_CF_ACCESS_SERVICE_ROLES`` service-token map ``<client-id>:<role>``
+                                     comma-separated; machine principals show
+                                     as ``svc:<client-id>``, default viewer,
+                                     never citizen
+
+The role map — not the Access application AUD — is the authorization
+boundary between the operator console and the civilian Community Watch.
 """
 from __future__ import annotations
 
@@ -45,7 +56,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 JWKS_TTL_S = 3600.0
 CLOCK_SKEW_S = 60.0
-VALID_ROLES = ("admin", "operator", "analyst", "viewer")
+VALID_ROLES = ("admin", "operator", "analyst", "viewer", "citizen")
 
 # ASN.1 DigestInfo prefix for SHA-256 (RFC 8017 §9.2). The PKCS#1 v1.5
 # signature payload is: 0x00 0x01 [0xFF padding] 0x00 <prefix> <32-byte hash>.
@@ -97,14 +108,22 @@ class CloudflareAccess:
     def __init__(self, team_domain: str = "", aud: str = "",
                  role_map: Optional[Dict[str, str]] = None,
                  default_role: str = "viewer",
+                 service_roles: Optional[Dict[str, str]] = None,
                  fetcher: Optional[Callable[[str], bytes]] = None) -> None:
         self.team_domain = (team_domain or "").strip().rstrip("/")
-        self.aud = (aud or "").strip()
+        # Comma-separated AUDs: one origin may sit behind several path-scoped
+        # Access applications (console root + /community), each with its own
+        # audience tag. Role mapping — not the AUD — is the authz boundary.
+        self.auds = {a.strip() for a in (aud or "").split(",") if a.strip()}
         self.default_role = default_role if default_role in VALID_ROLES \
             else "viewer"
         # email (lowercased) -> role
         self.role_map = {k.lower(): v for k, v in (role_map or {}).items()
                          if v in VALID_ROLES}
+        # service-token Client ID (common_name) -> role; never citizen.
+        self.service_roles = {
+            k: v for k, v in (service_roles or {}).items()
+            if v in VALID_ROLES and v != "citizen"}
         self._fetcher = fetcher or _default_fetcher
         self._lock = threading.RLock()
         self._jwks: Dict[str, Any] = {}     # kid -> {"n": int, "e": int}
@@ -119,25 +138,34 @@ class CloudflareAccess:
             return [e.strip().lower() for e in
                     os.environ.get(var, "").split(",") if e.strip()]
         role_map: Dict[str, str] = {}
-        for role, var in (("viewer", "NEXUS_CF_ACCESS_VIEWERS"),
+        for role, var in (("citizen", "NEXUS_CF_ACCESS_CITIZENS"),
+                          ("viewer", "NEXUS_CF_ACCESS_VIEWERS"),
                           ("analyst", "NEXUS_CF_ACCESS_ANALYSTS"),
                           ("operator", "NEXUS_CF_ACCESS_OPERATORS"),
                           ("admin", "NEXUS_CF_ACCESS_ADMINS")):
             for email in _emails(var):
                 role_map[email] = role   # later (higher-priv) wins
+        service_roles: Dict[str, str] = {}
+        for pair in os.environ.get(
+                "NEXUS_CF_ACCESS_SERVICE_ROLES", "").split(","):
+            if ":" in pair:
+                cn, _, role = pair.strip().partition(":")
+                if cn and role:
+                    service_roles[cn] = role
         return cls(
             team_domain=os.environ.get("NEXUS_CF_ACCESS_TEAM_DOMAIN", ""),
             aud=os.environ.get("NEXUS_CF_ACCESS_AUD", ""),
             role_map=role_map,
             default_role=os.environ.get(
                 "NEXUS_CF_ACCESS_DEFAULT_ROLE", "viewer"),
+            service_roles=service_roles,
             fetcher=fetcher)
 
     @property
     def enabled(self) -> bool:
         """Access-only mode is on only when both the team domain and the
         application audience are configured (so we can validate ``aud``)."""
-        return bool(self.team_domain and self.aud)
+        return bool(self.team_domain and self.auds)
 
     @property
     def issuer(self) -> str:
@@ -166,8 +194,9 @@ class CloudflareAccess:
                 doc = json.loads(raw)
                 keys = {}
                 for k in doc.get("keys", []):
-                    if k.get("kty") == "RSA" and "n" in k and "e" in k:
-                        keys[k.get("kid", "")] = {
+                    if k.get("kty") == "RSA" and "n" in k and "e" in k \
+                            and k.get("kid"):
+                        keys[k["kid"]] = {
                             "n": _int_from_b64url(k["n"]),
                             "e": _int_from_b64url(k["e"])}
                 if keys:
@@ -224,14 +253,25 @@ class CloudflareAccess:
             raise AccessError("Access assertion issuer mismatch.")
         aud = payload.get("aud", [])
         aud_list = aud if isinstance(aud, list) else [aud]
-        if self.aud not in aud_list:
+        if not (self.auds & {str(a) for a in aud_list}):
             raise AccessError("Access assertion audience mismatch.")
 
         email = (payload.get("email")
                  or payload.get("identity_nonce")
                  or payload.get("sub", "")).lower()
+        common_name = str(payload.get("common_name", "")).strip()
+        if not email and common_name:
+            # Service-token assertion (machine client): sub is empty and
+            # common_name carries the CF-Access-Client-Id. Never a citizen.
+            return {"sub": f"svc:{common_name}", "email": "",
+                    "role": self.service_roles.get(common_name, "viewer"),
+                    "exp": float(payload.get("exp", now))}
         if not email:
             raise AccessError("Access assertion has no identity.")
+        if "@" not in email:
+            # Only a verified email mints a human principal; a bare sub
+            # (uuid, opaque id) must not fall through to a role-mapped user.
+            raise AccessError("Access assertion identity is not an email.")
         return {"sub": email, "email": email,
                 "role": self.role_for(email),
                 "exp": float(payload.get("exp", now))}

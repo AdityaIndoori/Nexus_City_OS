@@ -5,10 +5,14 @@ Standard-library HTTP server exposing the platform API and serving the
 operator Live Grid UI. Zero external dependencies — runs anywhere.
 
 Production hardening in this layer:
-  * AUTH — every /api route (except /api/login) requires a signed bearer
-    session token (see ``nexus.auth``). The acting principal is taken from
-    the verified token, NEVER from the request body — clients cannot
-    impersonate another user. Login failures and logouts are audit-logged.
+  * AUTH — identity comes SOLELY from the Cloudflare Access JWT
+    (``Cf-Access-Jwt-Assertion`` header or ``CF_Authorization`` cookie),
+    verified against the team JWKS (see ``nexus.cfaccess``). There is no
+    in-app login, no passwords, no bearer tokens. The acting principal is
+    taken from the verified JWT, NEVER from the request body — clients
+    cannot impersonate another user. Offline dev runs use the explicit
+    ``NEXUS_DEV_IDENTITY`` env identity (fail-closed: refused when Access
+    is configured; startup refuses when NEITHER is configured).
   * PERSISTENCE — the runtime opens the durable Store; the audit chain,
     operating mode, users, incidents, and plans survive restarts.
   * REAL-TIME PUSH — /api/events is a Server-Sent-Events stream driven by
@@ -16,8 +20,7 @@ Production hardening in this layer:
     instead of waiting on a polling interval.
 
 Endpoints (JSON):
-  POST /api/login                — {user_id, password} → {token, role}
-  POST /api/logout               — revoke the current session
+  POST /api/logout               — audit-logged sign-out (edge logout URL)
   GET  /api/status               — full platform status snapshot
   GET  /api/grid                 — city graph snapshot (map data)
   GET  /api/events               — SSE stream (state-change push)
@@ -52,7 +55,6 @@ from urllib.parse import parse_qs, urlparse
 from . import bootstrap
 from .adapters import CityAdapter, SeattleLiveAdapter, TacomaAdapter
 from .analytics import Analytics
-from .auth import AuthError, Authenticator
 from .certs import CERT_ACTION
 from .cfaccess import AccessError, CloudflareAccess
 from .community import CommunityHub
@@ -77,7 +79,6 @@ from .security import (
     MAX_BODY_BYTES,
     client_ip,
     security_headers,
-    verify_turnstile,
 )
 from .store import Store
 from .vision import VisionSweep
@@ -96,11 +97,6 @@ DEFAULT_DB = _os.environ.get(
     "NEXUS_DB_PATH",
     str(Path(__file__).resolve().parent.parent / "data" / "nexus.db"))
 
-
-# Routes that do not require a session token.
-PUBLIC_ROUTES = {"/", "/index.html", "/api/login", "/healthz",
-                 "/landing", "/landing/", "/community", "/community/",
-                 "/api/community/signup"}
 
 # Community photo uploads ride in JSON bodies (base64 jpeg) — allow a
 # larger body on exactly those two routes; everything else keeps the
@@ -125,6 +121,26 @@ CITY_ADAPTERS = {
 }
 
 
+class AuthError(Exception):
+    pass
+
+
+def _dev_identity() -> Dict[str, Any]:
+    """Parse NEXUS_DEV_IDENTITY ("email:role") into a principal dict.
+    Raises SystemExit on a malformed value — never fail open."""
+    raw = _os.environ.get("NEXUS_DEV_IDENTITY", "").strip()
+    email, _, role = raw.partition(":")
+    email, role = email.strip().lower(), role.strip().lower()
+    if not email or role not in ("admin", "operator", "analyst", "viewer",
+                                 "citizen"):
+        raise SystemExit(
+            f"NEXUS_DEV_IDENTITY {raw!r} is invalid: expected "
+            f"'email:role' with role in admin/operator/analyst/viewer/"
+            f"citizen.")
+    return {"sub": email, "email": email, "role": role,
+            "exp": now_ts() + 8 * 3600}
+
+
 class PlatformRuntime:
     """Holds the engine + background data-polling loop.
 
@@ -145,14 +161,26 @@ class PlatformRuntime:
                 city, CITY_ADAPTERS["seattle"])[0]
             adapter = adapter_cls()
         self.store = Store(db_path)
-        # Cloudflare Access (Zero Trust). When configured (team domain + AUD)
-        # this becomes the ONLY sign-in path: identity comes from the signed
-        # Access JWT verified at the origin; the in-app password login is
-        # disabled and the demo accounts are not seeded.
+        # Cloudflare Access (Zero Trust) is the ONLY identity layer:
+        # identity comes from the signed Access JWT verified at the origin.
+        # Offline dev uses the explicit NEXUS_DEV_IDENTITY env identity —
+        # FAIL-CLOSED: refused when Access is configured, and startup
+        # refuses when neither is configured.
         self.cfaccess = CloudflareAccess.from_env()
-        if self.cfaccess.enabled:
-            _os.environ.setdefault("NEXUS_DISABLE_DEMO_ACCOUNTS", "1")
-        self.auth = Authenticator(self.store)
+        dev_identity_set = bool(
+            _os.environ.get("NEXUS_DEV_IDENTITY", "").strip())
+        if self.cfaccess.enabled and dev_identity_set:
+            raise SystemExit(
+                "NEXUS_DEV_IDENTITY refused: Cloudflare Access is "
+                "configured. Unset one of them.")
+        if not self.cfaccess.enabled and not dev_identity_set:
+            raise SystemExit(
+                "No identity layer configured. Set NEXUS_CF_ACCESS_TEAM_"
+                "DOMAIN + NEXUS_CF_ACCESS_AUD (production) or "
+                "NEXUS_DEV_IDENTITY=email:role (offline dev, e.g. "
+                "dev@local:admin).")
+        self.dev_identity: Optional[Dict[str, Any]] = \
+            _dev_identity() if dev_identity_set else None
 
         self.engine, self.edge, self.adapter = bootstrap(
             adapter, self.store, use_llm=use_llm)
@@ -215,11 +243,11 @@ class PlatformRuntime:
         # the topology is live, and the LLM client is available.
         self.vision = VisionSweep(self.engine, self.adapter)
         self.analytics = Analytics(self.store)
-        # Community Watch: civilian signup, photo-verified reports,
+        # Community Watch: citizen profiles, photo-verified reports,
         # comments — riding the same engine/audit/store.
-        self.community = CommunityHub(self.engine, self.store, self.auth)
+        self.community = CommunityHub(self.engine, self.store)
         # Public-edge abuse protection (defense in depth behind Cloudflare):
-        # per-IP token-bucket rate limiting + Turnstile on login.
+        # per-IP token-bucket rate limiting.
         self.ratelimit = IPRateLimiter()
 
         self.vision_enabled = bool(
@@ -341,7 +369,7 @@ def _timing_plan_from_dict(data: Dict[str, Any]) -> SignalTimingPlan:
 def make_handler(runtime: PlatformRuntime):
     engine: NexusEngine = runtime.engine
     community: CommunityHub = getattr(runtime, "community", None) \
-        or CommunityHub(engine, runtime.store, runtime.auth)
+        or CommunityHub(engine, runtime.store)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "NexusCityOS/1.1"
@@ -384,11 +412,10 @@ def make_handler(runtime: PlatformRuntime):
             peer = self.client_address[0] if self.client_address else "?"
             return client_ip(self.headers, peer)
 
-        def _rate_ok(self, login: bool = False) -> bool:
+        def _rate_ok(self) -> bool:
             """Per-IP token-bucket gate. On 429, writes the response (with
             Retry-After) and returns False so the caller aborts."""
-            allowed, retry = runtime.ratelimit.check(
-                self._client_ip(), login=login)
+            allowed, retry = runtime.ratelimit.check(self._client_ip())
             if allowed:
                 return True
             body = json.dumps(
@@ -457,34 +484,28 @@ def make_handler(runtime: PlatformRuntime):
             return True
 
         def _principal(self, parsed) -> Dict[str, Any]:
-            """Resolve the acting principal.
-
-            In **Cloudflare Access mode** identity comes solely from the
-            signed Access JWT (verified against the team JWKS) — there is no
-            bearer token and no in-app login. Otherwise fall back to the
-            HMAC session token (Authorization header or ?token=)."""
+            """Resolve the acting principal — SOLELY from the verified
+            Cloudflare Access JWT (header or CF_Authorization cookie), or
+            the explicit NEXUS_DEV_IDENTITY in offline dev mode. No bearer
+            tokens, no query-string fallback."""
             if runtime.cfaccess.enabled:
                 try:
                     principal = runtime.cfaccess.verify(self._cf_access_jwt())
                 except AccessError as exc:
                     raise AuthError(str(exc)) from None
-                # Register the Access-authenticated identity in the engine's
-                # RBAC table so privileged actions (ack/resolve/approve/mode)
-                # recognize the email subject (fixes "Unknown user <email>").
-                try:
-                    engine.users[principal["sub"]] = Role(principal["role"])
-                except (ValueError, KeyError):
-                    pass
-                return principal
-            auth_header = self.headers.get("Authorization", "")
-            token = ""
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:].strip()
-            if not token:
-                token = parse_qs(parsed.query).get("token", [""])[0]
-            if not token:
+            elif runtime.dev_identity is not None:
+                principal = runtime.dev_identity
+            else:
                 raise AuthError("Authentication required.")
-            return runtime.auth.verify_token(token)
+            # Register the verified identity in the engine's RBAC table so
+            # privileged actions (ack/resolve/approve/mode) recognize the
+            # subject. Mutation under the engine lock (shared invariant).
+            try:
+                with engine._lock:
+                    engine.users[principal["sub"]] = Role(principal["role"])
+            except (ValueError, KeyError):
+                pass
+            return principal
 
 
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -537,9 +558,9 @@ def make_handler(runtime: PlatformRuntime):
                     self._serve_landing()
                     return
                 if route in ("/community", "/community/"):
-                    # Community Watch app (civilian signup + nearby alerts +
+                    # Community Watch app (civilian nearby alerts +
                     # photo confirmation). Public shell; the API inside is
-                    # session-gated.
+                    # identity-gated.
                     self._send_html(
                         COMMUNITY_PATH.read_text(encoding="utf-8"))
                     return
@@ -566,27 +587,8 @@ def make_handler(runtime: PlatformRuntime):
                     return
                 if route in ("/", "/index.html"):
                     html = UI_PATH.read_text(encoding="utf-8")
-                    # Inject the Turnstile *site* key (public, safe to embed)
-                    # so the login widget renders only when CAPTCHA is on.
-                    import os as _os
-                    html = html.replace(
-                        "__TURNSTILE_SITE_KEY__",
-                        _os.environ.get("TURNSTILE_SITE_KEY", ""))
-                    # Demo credential pre-fill is OFF by default. It is only
-                    # enabled when an operator explicitly opts in via
-                    # NEXUS_DEMO_PREFILL=1 (handy for a local walkthrough) and
-                    # never when the demo accounts are disabled. On a public
-                    # deployment the login fields ship empty.
-                    _prefill = (
-                        _os.environ.get("NEXUS_DEMO_PREFILL", "0")
-                        in ("1", "true", "True", "yes")
-                        and _os.environ.get("NEXUS_DISABLE_DEMO_ACCOUNTS", "0")
-                        in ("0", "false", "False", ""))
-                    html = html.replace(
-                        "__DEMO_PREFILL__", "1" if _prefill else "")
-                    # Cloudflare Access mode: tell the UI to skip its own
-                    # login overlay entirely (identity is the Access JWT) and
-                    # where to send the "sign out" link.
+                    # __CF_ACCESS__ tells the UI whether the /cdn-cgi edge
+                    # logout exists ("1" behind Access, "" in dev mode).
                     cfa = runtime.cfaccess
                     html = html.replace(
                         "__CF_ACCESS__", "1" if cfa.enabled else "")
@@ -1010,9 +1012,8 @@ def make_handler(runtime: PlatformRuntime):
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             route = parsed.path
-            # Per-IP rate gate BEFORE reading the body (cheap DoS guard);
-            # login uses the stricter bucket (credential-stuffing defence).
-            if not self._rate_ok(login=(route == "/api/login")):
+            # Per-IP rate gate BEFORE reading the body (cheap DoS guard).
+            if not self._rate_ok():
                 return
             try:
                 body = self._body(
@@ -1022,59 +1023,8 @@ def make_handler(runtime: PlatformRuntime):
                 self._send_json({"error": str(exc)}, 413)
                 return
             try:
-                if route == "/api/community/signup":
-                    # Public self-service civilian signup (Community Watch).
-                    if runtime.cfaccess.enabled:
-                        self._send_json(
-                            {"error": "Sign-up is handled by Cloudflare "
-                                      "Access on this deployment."}, 403)
-                        return
-                    session = community.signup(
-                        str(body.get("user_id", "")),
-                        str(body.get("password", "")),
-                        str(body.get("display_name", "")))
-                    self._send_json(session)
-                    return
-                if route == "/api/login":
-                    # Cloudflare Access mode: the in-app password login is
-                    # disabled — sign-in is handled entirely at Cloudflare's
-                    # edge (Zero Trust), so there is no local credential path.
-                    if runtime.cfaccess.enabled:
-                        self._send_json(
-                            {"error": "Sign-in is handled by Cloudflare "
-                                      "Access."}, 403)
-                        return
-                    user_id = str(body.get("user_id", ""))
-                    # CAPTCHA: Cloudflare Turnstile on the public login path.
-
-                    # Disabled (allowed) when TURNSTILE_SECRET is unset.
-                    if not verify_turnstile(
-                            str(body.get("turnstile_token", "")),
-                            remote_ip=self._client_ip()):
-                        engine.audit.record(
-                            actor=user_id or "unknown",
-                            action="login_failed", outcome="denied",
-                            detail="turnstile verification failed")
-                        self._send_json(
-                            {"error": "CAPTCHA verification failed."}, 403)
-                        return
-                    try:
-                        session = runtime.auth.login(
-                            user_id, str(body.get("password", "")))
-                    except AuthError as exc:
-
-                        engine.audit.record(
-                            actor=user_id or "unknown",
-                            action="login_failed", outcome="denied",
-                            detail=str(exc))
-                        raise
-                    engine.audit.record(actor=user_id, action="login",
-                                        detail=f"role={session['role']}")
-                    self._send_json(session)
-                    return
-
-                # Everything else requires a verified session; the acting
-                # user is the token subject — never the request body.
+                # Every POST requires a verified identity; the acting user
+                # is the JWT subject — never the request body.
                 principal = self._principal(parsed)
                 user_id = principal["sub"]
                 if self._citizen_blocked(principal, route,
@@ -1082,11 +1032,12 @@ def make_handler(runtime: PlatformRuntime):
                     return
 
                 if route == "/api/logout":
-                    auth_header = self.headers.get("Authorization", "")
-                    if auth_header.startswith("Bearer "):
-                        runtime.auth.revoke_token(auth_header[7:].strip())
+                    # Sign-out lives at Cloudflare's edge; the origin only
+                    # audit-logs and points the client at the edge logout.
                     engine.audit.record(actor=user_id, action="logout")
-                    self._send_json({"ok": True})
+                    self._send_json({"ok": True,
+                                     "logout_url":
+                                         runtime.cfaccess.logout_url})
                 elif route == "/api/tick":
                     self._send_json(runtime.tick())
                 elif route == "/api/scenario":
@@ -1341,8 +1292,14 @@ def serve(host: str = "127.0.0.1", port: int = 8757,
     print(f"Mode: {runtime.engine.mode.value.upper()}")
     print(f"AI vision sweep: "
           f"{'enabled' if runtime.vision_enabled else 'disabled'}")
-    print(f"Auth: session tokens required (demo accounts: op-1, admin-1, "
-          f"analyst-1, viewer-1)")
+    if runtime.cfaccess.enabled:
+        print("Auth: Cloudflare Access (Zero Trust) — identity from the "
+              "signed Access JWT")
+    else:
+        dev = runtime.dev_identity or {}
+        print(f"Auth: *** DEV IDENTITY MODE *** every request acts as "
+              f"{dev.get('sub')} (role {dev.get('role')}) — never expose "
+              f"this server publicly")
     print(f"Operator UI:  http://{host}:{port}/")
     try:
         httpd.serve_forever()
@@ -1387,5 +1344,7 @@ def build_arg_parser():
 
 if __name__ == "__main__":
     _args = build_arg_parser().parse_args()
+    if _args.sim:
+        _os.environ.setdefault("NEXUS_DEV_IDENTITY", "dev@local:admin")
     serve(host=_args.host, port=_args.port, live=not _args.sim,
           city=_args.city, enable_vision=not _args.no_vision)

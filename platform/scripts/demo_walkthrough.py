@@ -197,6 +197,8 @@ def main() -> None:
     print("Offline, deterministic, self-contained (seed=42, in-memory store).")
 
     engine, edge, _ = bootstrap(SeattleAdapter(seed=42), store=Store(":memory:"))
+    with engine._lock:
+        engine.users.update({"op-1": Role.OPERATOR, "admin-1": Role.ADMIN})
 
     inc = beat_1_incident(engine, edge)
     plan = beat_2_plan(engine, inc)

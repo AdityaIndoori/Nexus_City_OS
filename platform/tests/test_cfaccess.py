@@ -1,119 +1,20 @@
 """
 Tests for the Cloudflare Access (Zero Trust) identity layer (nexus.cfaccess).
 
-Zero external dependencies: we generate a real RSA keypair in pure Python
-(Miller-Rabin prime search), publish its public half as a JWKS document
-through an injected fetcher, sign Access-style JWTs with the private exponent
-(`pow(m, d, n)`), and assert the verifier accepts valid tokens and rejects
-tampered / wrong-audience / wrong-issuer / expired / unknown-kid ones.
+Zero external dependencies: helpers_cfaccess generates a real RSA keypair in
+pure Python (Miller-Rabin prime search), publishes its public half as a JWKS
+document through an injected fetcher, and signs Access-style JWTs with the
+private exponent (`pow(m, d, n)`); we assert the verifier accepts valid
+tokens and rejects tampered / wrong-audience / wrong-issuer / expired /
+unknown-kid ones.
 """
 import base64
-import hashlib
 import json
-import random
 import time
 import unittest
 
-from nexus.cfaccess import (
-    AccessError,
-    CloudflareAccess,
-    _SHA256_DIGESTINFO,
-)
-
-# ---- pure-Python RSA keygen (test-only; small & deterministic-seeded) -----
-
-_rng = random.Random(20240615)
-
-
-def _is_probable_prime(n: int, rounds: int = 20) -> bool:
-    if n < 2:
-        return False
-    for p in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
-        if n % p == 0:
-            return n == p
-    d = n - 1
-    r = 0
-    while d % 2 == 0:
-        d //= 2
-        r += 1
-    for _ in range(rounds):
-        a = _rng.randrange(2, n - 1)
-        x = pow(a, d, n)
-        if x in (1, n - 1):
-            continue
-        for _ in range(r - 1):
-            x = pow(x, 2, n)
-            if x == n - 1:
-                break
-        else:
-            return False
-    return True
-
-
-def _gen_prime(bits: int) -> int:
-    while True:
-        cand = _rng.getrandbits(bits) | (1 << (bits - 1)) | 1
-        if _is_probable_prime(cand):
-            return cand
-
-
-def _gen_rsa(bits: int = 1024):
-    """Generate (n, e, d). 1024-bit keeps the test fast; the verifier is
-    bit-length agnostic so this exercises the same code path as CF's 2048."""
-    e = 65537
-    while True:
-        p = _gen_prime(bits // 2)
-        q = _gen_prime(bits // 2)
-        if p == q:
-            continue
-        n = p * q
-        phi = (p - 1) * (q - 1)
-        if phi % e == 0:
-            continue
-        d = pow(e, -1, phi)
-        return n, e, d
-
-
-def _b64u(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
-def _int_b64u(i: int) -> str:
-    return _b64u(i.to_bytes((i.bit_length() + 7) // 8, "big"))
-
-
-def _sign_rs256(signing_input: bytes, n: int, d: int) -> bytes:
-    k = (n.bit_length() + 7) // 8
-    digest = hashlib.sha256(signing_input).digest()
-    em = (b"\x00\x01"
-          + b"\xff" * (k - len(_SHA256_DIGESTINFO) - len(digest) - 3)
-          + b"\x00" + _SHA256_DIGESTINFO + digest)
-    m = int.from_bytes(em, "big")
-    sig = pow(m, d, n)
-    return sig.to_bytes(k, "big")
-
-
-class _Signer:
-    """Mints CF-Access-style JWTs for a generated key + serves its JWKS."""
-
-    def __init__(self, kid="kid-test"):
-        self.n, self.e, self.d = _gen_rsa(1024)
-        self.kid = kid
-
-    def jwks_bytes(self) -> bytes:
-        return json.dumps({"keys": [{
-            "kty": "RSA", "kid": self.kid, "alg": "RS256", "use": "sig",
-            "n": _int_b64u(self.n), "e": _int_b64u(self.e)}]}).encode()
-
-    def make_jwt(self, *, iss, aud, email, exp=None, kid=None, alg="RS256"):
-        now = time.time()
-        header = {"alg": alg, "kid": kid or self.kid, "typ": "JWT"}
-        payload = {"iss": iss, "aud": aud, "email": email,
-                   "iat": now, "exp": exp if exp is not None else now + 600}
-        h = _b64u(json.dumps(header).encode())
-        p = _b64u(json.dumps(payload).encode())
-        sig = _sign_rs256(f"{h}.{p}".encode("ascii"), self.n, self.d)
-        return f"{h}.{p}.{_b64u(sig)}"
+from nexus.cfaccess import AccessError, CloudflareAccess
+from tests.helpers_cfaccess import _Signer
 
 
 TEAM = "nexus-team.cloudflareaccess.com"
@@ -202,6 +103,81 @@ class CloudflareAccessTests(unittest.TestCase):
     def test_disabled_instance_refuses(self):
         with self.assertRaises(AccessError):
             CloudflareAccess().verify(self._jwt())
+
+    def test_service_token_maps_to_svc_principal(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            service_roles={"cid.access": "operator"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="cid.access"))
+        self.assertEqual(p["sub"], "svc:cid.access")
+        self.assertEqual(p["email"], "")
+        self.assertEqual(p["role"], "operator")
+
+    def test_service_token_unmapped_defaults_viewer(self):
+        p = self.cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="unknown.access"))
+        self.assertEqual(p["role"], "viewer")
+
+    def test_service_role_never_citizen(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            service_roles={"cid.access": "citizen"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, sub="", common_name="cid.access"))
+        self.assertEqual(p["role"], "viewer")
+
+    def test_bare_sub_without_email_rejected(self):
+        # No email/common_name — a bare opaque sub must NOT mint a human.
+        with self.assertRaises(AccessError):
+            self.cfa.verify(self.signer.make_jwt(
+                iss=f"https://{TEAM}", aud=AUD, sub="opaque-user-uuid"))
+
+    def test_non_string_aud_rejected_cleanly(self):
+        # aud as a dict/int must raise AccessError, never a TypeError/500.
+        for weird in ({"x": 1}, 123):
+            with self.assertRaises(AccessError):
+                self.cfa.verify(self.signer.make_jwt(
+                    iss=f"https://{TEAM}", aud=weird, email="op@city.gov"))
+
+    def test_multi_aud_accepts_any_configured(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud="console-aud, community-aud",
+            role_map={"op@city.gov": "operator"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        # token minted for the community app is still accepted (role is the
+        # authz boundary, not the AUD).
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud="community-aud", email="op@city.gov"))
+        self.assertEqual(p["role"], "operator")
+
+    def test_citizen_role_mapping(self):
+        cfa = CloudflareAccess(
+            team_domain=TEAM, aud=AUD,
+            role_map={"resident@x.com": "citizen"},
+            fetcher=lambda url: self.signer.jwks_bytes())
+        p = cfa.verify(self.signer.make_jwt(
+            iss=f"https://{TEAM}", aud=AUD, email="resident@x.com"))
+        self.assertEqual(p["role"], "citizen")
+
+    def test_jwks_entry_without_kid_ignored(self):
+        # A JWKS key with no kid must not create a ""-keyed match that a
+        # kid-less token could exploit.
+        signer = self.signer
+
+        def kidless_jwks(url):
+            import json as _j
+            doc = _j.loads(signer.jwks_bytes())
+            doc["keys"][0].pop("kid", None)
+            return _j.dumps(doc).encode()
+        cfa = CloudflareAccess(team_domain=TEAM, aud=AUD,
+                               fetcher=kidless_jwks)
+        with self.assertRaises(AccessError):
+            cfa.verify(signer.make_jwt(
+                iss=f"https://{TEAM}", aud=AUD, email="op@city.gov", kid=""))
+
 
     def test_from_env(self):
         import os

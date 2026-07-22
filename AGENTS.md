@@ -32,10 +32,9 @@ models.json     # gateway snapshot only — NOT loaded at runtime (model IDs har
 | New city support | platform/nexus/adapters.py | subclass ONLY; no city branches in core |
 | Live data feeds (OBA/NWS/SDOT/WSDOT/911) | platform/nexus/livedata.py | TTL cache + stale fallback |
 | LLM plan/vision/chat | platform/nexus/copilot.py + llm.py | output schema-validated, never trusted |
-| Auth (passwords/tokens) | platform/nexus/auth.py | PBKDF2, HMAC bearer 8h |
-| Cloudflare Access JWT | platform/nexus/cfaccess.py | pure-stdlib RS256 verify |
+| Auth / identity — Cloudflare Access JWT is the ONLY identity layer | platform/nexus/cfaccess.py | pure-stdlib RS256 verify; role map via NEXUS_CF_ACCESS_*; NEXUS_DEV_IDENTITY for offline dev |
 | Operator UI | platform/ui/index.html | single 143KB file, string-substituted at serve time |
-| Env vars | .env.example | NEXUS_ prefix (exceptions: PORT, WSDOT_ACCESS_CODE, TURNSTILE_*) |
+| Env vars | .env.example | NEXUS_ prefix (exceptions: PORT, WSDOT_ACCESS_CODE) |
 
 ## CONVENTIONS (deviations from standard)
 
@@ -76,6 +75,5 @@ python platform/scripts/build_pages_mirror.py                   # regenerate doc
 ## NOTES
 
 - Deployed behind Cloudflare tunnel run as a Windows service — **never** start the compose `cloudflared` sidecar (one-connector rule; duplicates break SSH/HTTP).
-- Demo accounts (op-1/admin-1/analyst-1/viewer-1, password `nexus-<user>`) off by default; `NEXUS_DEMO_PREFILL=1` opt-in; Access-only mode never seeds them.
 - Env booleans parsed via `in ("1","true","yes")`; read with `os.environ.get(...).strip()`.
 - CI: Python 3.10 + 3.12 matrix + Docker build; every push.

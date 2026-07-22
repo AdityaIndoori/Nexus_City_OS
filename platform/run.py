@@ -17,5 +17,7 @@ from nexus.server import build_arg_parser, serve  # noqa: E402
 
 if __name__ == "__main__":
     args = build_arg_parser().parse_args()
+    if args.sim:
+        os.environ.setdefault("NEXUS_DEV_IDENTITY", "dev@local:admin")
     serve(host=args.host, port=args.port, live=not args.sim,
           city=args.city, enable_vision=not args.no_vision)

@@ -23,10 +23,13 @@ from nexus.models import (
     OperatingMode,
     PlanStatus,
 )
+from tests.helpers_auth import seed_demo_users
 
 
 def make_platform():
-    return bootstrap(SeattleAdapter(seed=42))
+    engine, edge, adapter = bootstrap(SeattleAdapter(seed=42))
+    seed_demo_users(engine)
+    return engine, edge, adapter
 
 
 def detect_incident(engine, edge, intersection_id=None):

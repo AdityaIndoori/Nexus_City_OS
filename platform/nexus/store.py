@@ -15,7 +15,9 @@ What is persisted and why:
   * incidents/plans  — operational state snapshots for restart recovery and
                        the historical outcomes database (feeds confidence
                        calibration).
-  * users            — PBKDF2-hashed credentials for the auth layer.
+  * users            — legacy credential table (identity is Cloudflare
+                       Access now); DDL kept per the additive-only schema
+                       rule, never written or read.
 
 WAL journal mode keeps readers non-blocking under the background tick loop.
 """
@@ -264,33 +266,9 @@ class Store:
         return {status: count for status, count in rows}
 
     # ---- users -----------------------------------------------------------
-
-    def upsert_user(self, user_id: str, role: str, salt: bytes,
-                    pw_hash: bytes, created_at: float) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO users (user_id, role, salt, pw_hash, created_at)"
-                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
-                "role=excluded.role, salt=excluded.salt, "
-                "pw_hash=excluded.pw_hash",
-                (user_id, role, salt, pw_hash, created_at))
-            self._conn.commit()
-
-    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT user_id, role, salt, pw_hash FROM users "
-                "WHERE user_id=?", (user_id,)).fetchone()
-        if row is None:
-            return None
-        return {"user_id": row[0], "role": row[1],
-                "salt": row[2], "pw_hash": row[3]}
-
-    def list_users(self) -> List[Dict[str, str]]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT user_id, role FROM users ORDER BY user_id").fetchall()
-        return [{"user_id": r[0], "role": r[1]} for r in rows]
+    # Identity is Cloudflare Access (see nexus.cfaccess); the users table
+    # DDL survives per the additive-only schema rule but is no longer
+    # written or read.
 
     # ---- community watch ---------------------------------------------------
 

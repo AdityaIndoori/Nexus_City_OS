@@ -1,9 +1,10 @@
 """
 Nexus City OS — Community Watch (civilian participation layer).
 
-Civilians sign up with a self-service account (Role.CITIZEN — strictly
-outside the operator RBAC ladder), keep a profile with a home location and
-a customizable alert radius, and receive a nearby-incident feed. They can:
+Civilians are invited through Cloudflare Access (Role.CITIZEN via the
+email→role map — strictly outside the operator RBAC ladder); their profile
+(display name from the email local-part, home location, customizable alert
+radius) is auto-created on their first mutating community call. They can:
 
   * CONFIRM an active incident with a geo-checked photo. The photo passes
     the AI vision gate (Copilot.analyze_frame); a verified confirmation is
@@ -21,26 +22,22 @@ Trust ladder: vision-verified → published; vision-rejected → discarded;
 vision unavailable → PENDING moderation queue for operators (unverified
 content is never auto-published). Every publish/moderation decision lands
 in the audit chain. Citizens can never reach a governance action: the
-server hard-gates them off every operator API, and they are never entered
-into the engine RBAC table.
+server hard-gates them off every operator API. Service-token principals
+(``svc:*``, empty email) are machines — community WRITES reject them.
 """
 from __future__ import annotations
 
 import base64
 import binascii
 import math
-import re
 import threading
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional
 
-from .auth import Authenticator
 from .copilot import RateLimitExceeded
 from .models import Incident, IncidentType, new_id, now_ts
 from .store import Store
 
-HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,23}$")   # 3–24 chars, url-safe
-MIN_PASSWORD_LEN = 8
 RADIUS_MIN_M = 100.0            # governed alert-radius range
 RADIUS_MAX_M = 10000.0
 DEFAULT_RADIUS_M = 1500.0
@@ -64,41 +61,36 @@ def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 class CommunityHub:
-    """Signup, profiles, nearby feed, photo-verified reports, comments."""
+    """Profiles, nearby feed, photo-verified reports, comments."""
 
-    def __init__(self, engine, store: Store, auth: Authenticator) -> None:
+    def __init__(self, engine, store: Store) -> None:
         self._engine = engine
         self._store = store
-        self._auth = auth
         self._lock = threading.RLock()
         # per-user report throttle: user_id -> deque[submission ts]
         self._report_times: Dict[str, Deque[float]] = {}
 
-    # ---- signup ------------------------------------------------------------
+    # ---- identity gates ------------------------------------------------------
 
-    def signup(self, user_id: str, password: str,
-               display_name: str) -> Dict[str, Any]:
-        user_id = user_id.strip()
-        if not HANDLE_RE.match(user_id):
+    @staticmethod
+    def _require_person(user_id: str) -> None:
+        # Service-token principals (svc:<client-id>) are machines — they
+        # can read but never author community content.
+        if user_id.startswith("svc:"):
             raise ValueError(
-                "User ID must be 3-24 characters: lowercase letters, "
-                "digits and hyphens only.")
-        if len(password) < MIN_PASSWORD_LEN:
-            raise ValueError(
-                f"Password must be at least {MIN_PASSWORD_LEN} characters.")
-        if self._store.get_user(user_id) is not None:
-            raise ValueError("That user ID is taken.")
-        self._auth.create_user(user_id, "citizen", password)
-        display = (display_name or user_id).strip()[:40] or user_id
+                "Service-token identities cannot post to Community Watch.")
+
+    def _ensure_profile(self, user_id: str) -> Dict[str, Any]:
+        """Idempotent lazy profile upsert on first mutating community call.
+        Display name defaults to the email local-part."""
+        profile = self._store.get_community_profile(user_id)
+        if profile is not None:
+            return profile
         profile = self._default_profile(user_id)
-        profile["display_name"] = display
+        profile["display_name"] = (
+            user_id.split("@", 1)[0].strip()[:40] or user_id)
         self._store.upsert_community_profile(user_id, profile, now_ts())
-        self._engine.audit.record(
-            actor=user_id, action="community_signup",
-            detail=f"citizen account created (display '{display}')")
-        session = self._auth.login(user_id, password)
-        session["display_name"] = display
-        return session
+        return profile
 
     # ---- profile -----------------------------------------------------------
 
@@ -118,6 +110,8 @@ class CommunityHub:
 
     def update_profile(self, user_id: str,
                        fields: Dict[str, Any]) -> Dict[str, Any]:
+        self._require_person(user_id)
+        self._ensure_profile(user_id)
         profile = self.get_profile(user_id)
         # Only citizen-editable fields; the acting user comes from the
         # verified token — a user_id in the body is ignored.
@@ -235,6 +229,8 @@ class CommunityHub:
 
     def confirm(self, user_id: str, incident_id: str, lat: Any, lon: Any,
                 note: str, photo_b64: str) -> Dict[str, Any]:
+        self._require_person(user_id)
+        self._ensure_profile(user_id)
         inc = self._engine.graph.incidents.get(incident_id)
         if inc is None:
             raise KeyError(f"Unknown incident {incident_id}")
@@ -302,6 +298,8 @@ class CommunityHub:
 
     def report(self, user_id: str, lat: Any, lon: Any, itype: str,
                note: str, photo_b64: str) -> Dict[str, Any]:
+        self._require_person(user_id)
+        self._ensure_profile(user_id)
         self._throttle(user_id)
         try:
             incident_type = IncidentType(str(itype))
@@ -419,6 +417,8 @@ class CommunityHub:
 
     def comment(self, user_id: str, incident_id: str,
                 text: str) -> Dict[str, Any]:
+        self._require_person(user_id)
+        self._ensure_profile(user_id)
         inc = self._engine.graph.incidents.get(incident_id)
         if inc is None:
             raise KeyError(f"Unknown incident {incident_id}")
@@ -492,7 +492,7 @@ class CommunityHub:
         status = "rejected"
         if decision == "approve":
             status = "verified"
-            analysis = {"assessment": f"operator-approved by {operator_id}",
+            analysis = {"assessment": "verified by a city operator",
                         "confidence_pct": None}
             if report["kind"] == "confirm":
                 inc = self._engine.graph.incidents.get(incident_id or "")

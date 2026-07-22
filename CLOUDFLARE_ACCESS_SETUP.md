@@ -1,8 +1,8 @@
-# Cloudflare Access (Zero Trust) — make it the ONLY sign-in
+# Cloudflare Access (Zero Trust) setup
 
-This turns the live instance into **Access-only mode**: there is no in-app
-password box, the demo accounts are not seeded, and every request's identity
-comes from a Cloudflare-signed Access JWT (verified in pure stdlib by
+Cloudflare Access is **the only identity layer** — there is no in-app
+password box, and no fallback. Every request's identity comes from a
+Cloudflare-signed Access JWT (verified in pure stdlib by
 `platform/nexus/cfaccess.py`). The reference deployment runs the platform on
 a local machine and publishes it through a **Cloudflare Tunnel**
 (`cloudflared`) — no inbound ports, free HTTPS, and Cloudflare's edge in
@@ -11,8 +11,9 @@ front of everything.
 > ⚠️ **Order matters.** Do Steps 1–4 first. Only set the
 > `NEXUS_CF_ACCESS_*` env vars (Step 5) **after** the Tunnel hostname + Access
 > application exist and you can reach the app through the Cloudflare hostname.
-> Setting them while the tunnel isn't up yet will lock everyone out
-> (no password login + no Access JWT → 401 loop).
+> Setting them too early locks everyone out — the server refuses to start
+> once Access is configured unless it can reach a request carrying a valid
+> Access JWT, and there is no password login to fall back to.
 
 ---
 
@@ -77,7 +78,8 @@ python platform/run.py
 After the restart, `https://APP_HOST` shows **no login form** — you're signed
 in as your Cloudflare identity; "Sign out" routes to `/cdn-cgi/access/logout`.
 Optional role lists: `NEXUS_CF_ACCESS_OPERATORS`, `NEXUS_CF_ACCESS_ANALYSTS`,
-`NEXUS_CF_ACCESS_VIEWERS` (comma-separated emails).
+`NEXUS_CF_ACCESS_VIEWERS`, `NEXUS_CF_ACCESS_CITIZENS` (comma-separated
+emails) — citizens are limited to the civilian Community Watch API only.
 
 ## Step 6 — Origin exposure
 With a Tunnel there is **no public origin to lock down** — the machine
@@ -89,18 +91,81 @@ can't bypass Access.
 
 ---
 
+## A second, path-scoped Access app (e.g. Community Watch on `/community*`)
+
+One hostname can carry two Access applications when the second one is
+scoped to a more specific path — Cloudflare picks the most-specific-path
+match, so an app on `nexus.aindoori.com/community*` wins over the root app
+on `nexus.aindoori.com` for requests under `/community`.
+
+1. Zero Trust → **Access → Applications → Add an application → Self-hosted**.
+2. **Application domain:** `nexus.aindoori.com/community*` (path suffix
+   `*` matters — without it the app only matches the exact path). Give it
+   its own Allow policy (e.g. "allow everyone with email OTP" for a public
+   citizen pilot, independent of the console's invite-only policy).
+3. Copy this app's own **AUD tag** and append it, comma-separated, to
+   `NEXUS_CF_ACCESS_AUD` — e.g.
+   `NEXUS_CF_ACCESS_AUD=<console-aud>,<community-aud>`. The origin accepts
+   a JWT from either application.
+4. Map citizen emails with `NEXUS_CF_ACCESS_CITIZENS` (or make `citizen` the
+   `NEXUS_CF_ACCESS_DEFAULT_ROLE` if the community app's policy is "allow
+   everyone").
+
+**The role map — not the AUD — is the authorization boundary** between the
+operator console and Community Watch. A citizen-role JWT is accepted on
+console routes too (both AUDs are trusted at the origin); `server.py`'s
+citizen gate is what actually confines that identity to `/api/community/*`.
+Don't rely on the second Access app's policy alone to keep citizens out of
+the console.
+
+## Service tokens (machine / MCP clients)
+
+Human logins go through a browser OTP/SSO flow; machine clients (MCP tools,
+CI, scripts) authenticate with a Cloudflare Access **service token** instead —
+a client ID + secret pair sent as headers on every request, no browser
+involved.
+
+1. Zero Trust → **Access → Service Auth → Service Tokens → Create Service
+   Token**. Name it (e.g. `nexus-mcp-ci`). Copy the **Client ID** and
+   **Client Secret** — the secret is shown once.
+2. On the Access application (console or community app), add a policy with
+   Action **Service Auth**, Include → **Service Token** = the token you
+   created. This lets the token in without an interactive login.
+3. **Turn OFF "Require binding cookie"** on the Access application — it's
+   an anti-token-replay feature for browser sessions and machine clients
+   can't satisfy it; leaving it on makes every service-token request fail.
+4. Map the token to a role with `NEXUS_CF_ACCESS_SERVICE_ROLES`:
+   `<client-id>:<role>` (comma-separated for multiple tokens). Unmapped
+   tokens default to `viewer`; service principals can never be `citizen`.
+5. The client sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`
+   headers on every request (no cookie, no interactive step). At the
+   origin, `cfaccess.py` sees a JWT with no `email` claim and a
+   `common_name` equal to the client ID, and maps it to principal
+   `svc:<client-id>` with the role from `NEXUS_CF_ACCESS_SERVICE_ROLES`.
+
+See `docs/mcp-connect.md` for the MCP client-side configuration.
+
+---
+
 ## How it verifies (the trust model)
 - `cloudflared` forwards the Access-stamped request, which carries the signed
   `Cf-Access-Jwt-Assertion` header / `CF_Authorization` cookie.
 - `nexus/cfaccess.py` fetches your team's JWKS
   (`https://<team>/cdn-cgi/access/certs`), verifies the JWT's **RS256**
-  signature with pure big-int math, and checks **issuer**, **audience (AUD)**,
-  and **expiry**. The bare email header is never trusted on its own.
+  signature with pure big-int math, and checks **issuer**, **audience (AUD,
+  matched against the comma-separated set)**, and **expiry**. The bare email
+  header is never trusted on its own.
 - Email → role mapping uses the `NEXUS_CF_ACCESS_*` lists; unmapped
   authenticated users get `NEXUS_CF_ACCESS_DEFAULT_ROLE` (default `viewer`).
+  Service-token assertions (no `email`, a `common_name`) map through
+  `NEXUS_CF_ACCESS_SERVICE_ROLES` instead, and never resolve to `citizen`.
 - Covered by `platform/tests/test_cfaccess.py` (RS256 verify, tamper / wrong
-  aud / wrong iss / expired / unknown-kid rejection, role mapping).
+  aud / wrong iss / expired / unknown-kid rejection, role mapping incl.
+  citizen and service-token principals).
 
 ## Rollback
-Remove the `NEXUS_CF_ACCESS_*` vars and restart → the app returns to its
-normal audit-logged password login.
+There is no password fallback — removing the `NEXUS_CF_ACCESS_*` vars just
+makes the server refuse to start (it requires either Access or an explicit
+`NEXUS_DEV_IDENTITY`; see `.env.example`). To roll back a deployment,
+`git revert` the commit(s) that introduced Access-only auth and redeploy the
+prior build.

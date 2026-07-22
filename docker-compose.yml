@@ -20,12 +20,13 @@ services:
       # expert system without it.
       - NEXUS_LLM_BASE_URL=${NEXUS_LLM_BASE_URL:-}
       - NEXUS_LLM_API_KEY=${NEXUS_LLM_API_KEY:-}
-      # Cloudflare Access-only sign-in (see CLOUDFLARE_ACCESS_SETUP.md).
+      # Cloudflare Access — the only sign-in path (see CLOUDFLARE_ACCESS_SETUP.md).
       - NEXUS_CF_ACCESS_TEAM_DOMAIN=${NEXUS_CF_ACCESS_TEAM_DOMAIN:-}
       - NEXUS_CF_ACCESS_AUD=${NEXUS_CF_ACCESS_AUD:-}
       - NEXUS_CF_ACCESS_ADMINS=${NEXUS_CF_ACCESS_ADMINS:-}
       - NEXUS_CF_ACCESS_DEFAULT_ROLE=${NEXUS_CF_ACCESS_DEFAULT_ROLE:-viewer}
-      - NEXUS_DISABLE_DEMO_ACCOUNTS=${NEXUS_DISABLE_DEMO_ACCOUNTS:-}
+      - NEXUS_CF_ACCESS_CITIZENS=${NEXUS_CF_ACCESS_CITIZENS:-}
+      - NEXUS_CF_ACCESS_SERVICE_ROLES=${NEXUS_CF_ACCESS_SERVICE_ROLES:-}
       # Public marketing site on its own subdomain (Host-based routing).
       - NEXUS_LANDING_HOST=${NEXUS_LANDING_HOST:-}
       - NEXUS_CONSOLE_URL=${NEXUS_CONSOLE_URL:-}

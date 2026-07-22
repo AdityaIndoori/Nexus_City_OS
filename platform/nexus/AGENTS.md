@@ -24,17 +24,16 @@ All runtime code: 22 stdlib-only modules; engine.py orchestrates, safety.py gate
 | VisionSweep daemon | vision.py | Haiku on camera frames ~2min; ≥70% conf; source="ai_vision" |
 | Hourly analytics from SQLite | analytics.py | 7-day retention |
 | SQLite persistence | store.py | `Store(":memory:")` in tests |
-| Passwords/tokens/lockout | auth.py | PBKDF2 210k iter |
-| Rate limiting, body cap, headers, Turnstile | security.py | trusts CF-Connecting-IP only if NEXUS_TRUST_PROXY |
-| CF Access JWT (RS256 vs JWKS) | cfaccess.py | role map via NEXUS_CF_ACCESS_* env |
+| Rate limiting, body cap, headers | security.py | trusts CF-Connecting-IP only if NEXUS_TRUST_PROXY |
+| CF Access JWT (RS256 vs JWKS) — the ONLY identity layer | cfaccess.py | role map via NEXUS_CF_ACCESS_* env; dev fallback NEXUS_DEV_IDENTITY |
 | HTTP routes, SSE, camera proxy | server.py | see below |
 
 ## server.py SPECIFICS
 
 - `make_handler(runtime)` closure → Handler class; ThreadingHTTPServer. Routes = flat if/elif in do_GET (~L436) / do_POST (~L884). Add new routes into those chains.
-- Auth: `_principal()` (~L384) — CF Access JWT (header/cookie) or HMAC bearer (`Authorization` / `?token=`). PUBLIC_ROUTES ~L88.
+- Auth: `_principal()` — CF Access JWT (`Cf-Access-Jwt-Assertion` header / `CF_Authorization` cookie) verified by cfaccess.py; dev mode = NEXUS_DEV_IDENTITY (fail-closed vs Access). PUBLIC_ROUTES ~L100.
 - SSE `/api/events`: rate-limit exempt; blocks in `engine.wait_for_event(last_seq, timeout=20)`; keepalive comment frame every 20s.
-- UI served by reading HTML from disk each request + string substitutions (`__TURNSTILE_SITE_KEY__`, `__DEMO_PREFILL__`, `__CF_ACCESS__`).
+- UI served by reading HTML from disk each request + string substitutions (`__CF_ACCESS__`, `__CF_ACCESS_LOGOUT__`).
 - Landing assets: PNG-only with traversal guard.
 
 ## ANTI-PATTERNS

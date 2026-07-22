@@ -61,8 +61,14 @@ python -m unittest discover -s platform/tests -t platform
 
 # Launch the platform with REAL Seattle data (default)
 python platform/run.py
-# → Operator UI:  http://127.0.0.1:8757/   (sign in: op-1 / nexus-op-1)
-# → demo accounts: op-1, admin-1, analyst-1, viewer-1 (password nexus-<user>)
+# → Operator UI:  http://127.0.0.1:8757/
+# Local runs have no Cloudflare Access configured, so the server needs an
+# explicit dev identity (fail-closed — it refuses to start with neither):
+#   set NEXUS_DEV_IDENTITY=dev@local:admin        (Windows)
+#   export NEXUS_DEV_IDENTITY=dev@local:admin     (macOS/Linux)
+# --sim sets this for you if you don't. Real deployments drop NEXUS_DEV_IDENTITY
+# and set NEXUS_CF_ACCESS_TEAM_DOMAIN + NEXUS_CF_ACCESS_AUD instead — see
+# "Hardening a public deployment" below.
 
 # Other launch modes:
 python platform/run.py --sim             # fully offline deterministic (no network)
@@ -111,60 +117,56 @@ unchanged on any container host if you prefer one.
 
 ### Hardening a public deployment
 
-The app-logic security (PBKDF2 credentials, HMAC bearer sessions, per-user
-lockout, RBAC, prompt-injection guard, hash-chained audit) is always on. For
-**public internet exposure**, two extra layers are included/recommended:
+There is no in-app login: **Cloudflare Access is the only identity layer**
+(RBAC, prompt-injection guard, and the hash-chained audit trail are always
+on regardless). For **public internet exposure**, two layers are
+included/recommended:
 
 **1. Cloudflare in front of the origin (infra — strongly recommended).**
 With the Tunnel deployment above the origin is never directly reachable —
 all traffic passes Cloudflare's edge for free DDoS protection, a WAF, edge
 rate-limiting, and bot scoring — the primary edge shield.
 
-> **Cloudflare authentication options.** The platform supports two
-> complementary Cloudflare auth layers, neither of which requires storing a
-> password in the page:
+> **Cloudflare Access (Zero Trust) — the only sign-in path.**
+> Put Cloudflare Access in front of the origin (Zero Trust → Access →
+> Applications). Visitors authenticate at Cloudflare's edge with Google,
+> GitHub, Microsoft, SAML/OIDC SSO, or one-time-PIN email **before the app
+> ever loads**. Set `NEXUS_CF_ACCESS_TEAM_DOMAIN` + `NEXUS_CF_ACCESS_AUD` and
+> every request's identity is taken from the **signed Access JWT** — which
+> `nexus/cfaccess.py` verifies in pure stdlib (RS256 against the team JWKS,
+> issuer + audience + expiry checked; the bare email header is never trusted
+> alone). Map emails to roles with `NEXUS_CF_ACCESS_ADMINS` / `_OPERATORS` /
+> `_ANALYSTS` / `_VIEWERS` / `_CITIZENS` (comma-separated); unmapped users get
+> `NEXUS_CF_ACCESS_DEFAULT_ROLE` (default `viewer`). `NEXUS_CF_ACCESS_AUD`
+> takes a comma-separated list so one hostname can carry a second,
+> path-scoped Access application (e.g. the civilian Community Watch app on
+> `/community*`) with its own audience — the **role map, not the AUD, is the
+> authorization boundary** between the console and Community Watch.
+> Machine/MCP clients authenticate with a Cloudflare Access **service
+> token** instead of a human login; map its client ID to a role with
+> `NEXUS_CF_ACCESS_SERVICE_ROLES` (`<client-id>:<role>`, never `citizen`) —
+> see `CLOUDFLARE_ACCESS_SETUP.md`. "Sign out" routes through
+> `/cdn-cgi/access/logout`. Covered by `test_cfaccess.py`. **No domain?** The
+> image bundles a `cloudflared` Tunnel sidecar (runs only when
+> `CLOUDFLARE_TUNNEL_TOKEN` is set) so you can front the origin with
+> Cloudflare + Access without owning a domain — full walkthrough in
+> **`CLOUDFLARE_ACCESS_SETUP.md`**.
 >
-> - **Cloudflare Access (Zero Trust) — the ONLY sign-in path when enabled.**
->   Put Cloudflare Access in front of the origin (Zero Trust → Access →
->   Applications). Visitors authenticate at Cloudflare's edge with Google,
->   GitHub, Microsoft, SAML/OIDC SSO, or one-time-PIN email **before the app
->   ever loads**. Set `NEXUS_CF_ACCESS_TEAM_DOMAIN` + `NEXUS_CF_ACCESS_AUD`
->   and the platform switches to **Access-only mode**: the in-app password
->   form disappears, the demo accounts are not seeded, and every request's
->   identity is taken from the **signed Access JWT** — which `nexus/cfaccess.py`
->   verifies in pure stdlib (RS256 against the team JWKS, issuer + audience +
->   expiry checked; the bare email header is never trusted alone). Map emails
->   to roles with `NEXUS_CF_ACCESS_ADMINS` / `_OPERATORS` / `_ANALYSTS` /
->   `_VIEWERS` (comma-separated); unmapped users get `NEXUS_CF_ACCESS_DEFAULT_ROLE`
->   (default `viewer`). "Sign out" routes through `/cdn-cgi/access/logout`.
->   Covered by `test_cfaccess.py`. **No domain?** The image bundles a
->   `cloudflared` Tunnel sidecar (runs only when `CLOUDFLARE_TUNNEL_TOKEN` is
->   set) so you can front the origin with Cloudflare + Access without owning a
->   domain — full walkthrough in **`CLOUDFLARE_ACCESS_SETUP.md`**.
-
-
-> - **Cloudflare Turnstile — CAPTCHA on the login form (already wired in).**
->   Set `TURNSTILE_SECRET` (server) + `TURNSTILE_SITE_KEY` (injected into the
->   UI) and the login is verified server-side against Cloudflare; unset →
->   CAPTCHA is simply off and login still works.
->
-> **No pre-filled password.** The login fields ship **blank** on any
-> deployment. The demo-credential auto-fill (`op-1` / `nexus-op-1`) is a
-> local-walkthrough convenience that is **off by default** and only turns on
-> when you explicitly set `NEXUS_DEMO_PREFILL=1` (and never when
-> `NEXUS_DISABLE_DEMO_ACCOUNTS=1`).
-
+> **Local runs without Cloudflare** (dev/`--sim`) use `NEXUS_DEV_IDENTITY`
+> (`email:role`) instead — a single env-declared identity for every request,
+> with a loud startup-banner warning. It's **fail-closed**: the server
+> refuses to start if `NEXUS_DEV_IDENTITY` is set while Access is configured,
+> and refuses to start if neither is configured. There is no login form, no
+> password, and no way to reach the app without one of the two.
 
 **2. In-app edge hardening (`nexus/security.py`, always compiled in):**
 
 | Control | Behavior | Tuning env |
 |---|---|---|
-| **Per-IP rate limiting** | Token-bucket per client IP (general + a stricter login bucket that defeats username-rotation credential stuffing); 429 + `Retry-After` | `NEXUS_RATE_GENERAL`, `NEXUS_RATE_LOGIN`, … |
+| **Per-IP rate limiting** | Token-bucket per client IP; 429 + `Retry-After` | `NEXUS_RATE_GENERAL` |
 | **Request-size cap** | Bodies over 64 KB → 413 (memory-DoS guard) | `NEXUS_MAX_BODY_BYTES` |
 | **Security headers** | HSTS, `nosniff`, `X-Frame-Options: DENY`, CSP, `Referrer-Policy` on every response | — |
 | **Real client IP** | Trusts `CF-Connecting-IP`/`X-Forwarded-For` only behind a proxy (else the socket peer, so the limiter can't be spoofed) | `NEXUS_TRUST_PROXY` |
-| **CAPTCHA on login** | Cloudflare **Turnstile** verified server-side on `/api/login`; fails closed on outage; disabled when unset | `TURNSTILE_SECRET` |
-| **No default creds in prod** | Override demo passwords per-user or disable the demo accounts entirely | `NEXUS_PASSWORD_<USER_ID>`, `NEXUS_DISABLE_DEMO_ACCOUNTS=1` |
 
 All pure-stdlib and covered by `test_security.py`. The camera proxy only
 fetches from a fixed server-side allow-list (no user URLs → no SSRF).
@@ -264,14 +266,14 @@ external dependencies:
 | Capability | Implementation |
 |---|---|
 | **Durable persistence** | SQLite (`nexus/store.py`, ANSI-portable to Postgres): the hash-chained audit trail is written through to disk and reloaded+verified on restart; operating mode and confidence threshold are restored exactly as the last Admin authorized them; incidents/plans are snapshotted (the plan-outcomes table feeds future confidence calibration) |
-| **Authentication** | PBKDF2-HMAC-SHA256 credentials (210k iterations, per-user salt, constant-time compare), 5-strike lockout, HMAC-signed bearer session tokens (8h expiry, revocation on logout). Every `/api` route except login returns 401 without a valid token |
-| **Identity integrity** | The acting principal is always the **verified token subject** — request bodies cannot impersonate users; an operator token attempting an Admin action gets 403 and an audit-logged `permission_denied` |
-| **Security audit events** | `login`, `login_failed` (denied), `logout`, `permission_denied` all land in the tamper-evident chain |
+| **Authentication** | Identity comes solely from the verified Cloudflare Access JWT (RS256 against the team JWKS, issuer + audience + expiry checked in pure stdlib) — no in-app login, no passwords, no bearer tokens. Offline dev uses an explicit `NEXUS_DEV_IDENTITY`, fail-closed against a configured Access instance |
+| **Identity integrity** | The acting principal is always the **verified JWT subject** — request bodies cannot impersonate users; an operator attempting an Admin action gets 403 and an audit-logged `permission_denied` |
+| **Security audit events** | `logout` and `permission_denied` land in the tamper-evident chain (sign-in itself happens at Cloudflare's edge, outside the origin, so there is no `login` event to log) |
 | **Real-time push** | `/api/events` Server-Sent-Events stream driven by the engine's event hub — incidents, plans, mode changes, and grid ticks push to every signed-in console immediately (with a green "live push" indicator); polling is only a slow fallback |
 
-Production swap points: `Store` → PostgreSQL/TimescaleDB, `Authenticator` →
-OIDC/SAML SSO + MFA, SSE → WebSocket fan-out behind a gateway, signing key →
-KMS/HSM.
+Production swap points: `Store` → PostgreSQL/TimescaleDB, Cloudflare Access →
+another OIDC/SAML IdP behind the same JWT-verification contract, SSE →
+WebSocket fan-out behind a gateway, signing key → KMS/HSM.
 
 ## Repository Map
 
@@ -358,8 +360,8 @@ KMS/HSM.
 | `vision.py` | **AI vision sweep**: background Claude Haiku analysis of live camera frames → real incident detections through the standard pipeline | 3 |
 | `analytics.py` | Historical aggregation over the store: hourly congestion, hotspots, incident/plan outcomes | — |
 | `store.py` | Durable SQLite persistence: audit chain, governance state, incidents/plans, users | 11.3 |
-| `auth.py` | PBKDF2 credentials + HMAC-signed session tokens + lockout/revocation | 11.2 |
-| `server.py` | Zero-dependency HTTP API + operator UI server + auth enforcement + SSE push + camera proxy | — |
+| `cfaccess.py` | Cloudflare Access (Zero Trust) JWT verification (pure-stdlib RS256 vs the team JWKS) — the only identity layer; email→role mapping incl. citizen; service-token principals | 11.2 |
+| `server.py` | Zero-dependency HTTP API + operator UI server + Access-JWT enforcement + SSE push + camera proxy | — |
 
 ## Safety Guarantees (each enforced by code and proven by tests)
 
@@ -455,9 +457,11 @@ analytics aggregation (hourly buckets, hotspot ordering, plan-outcome
 bucketing, pruning, empty-store safety),
 multi-city SDK (TacomaAdapter identity/params, offline fallback, shared
 topology builder regression, disabled-911 health),
-audit-chain restart durability, governance-state restoration, credential
-verification + lockout + token forgery/revocation rejection, salted hashing,
-event-hub wakeups, live-adapter graceful fallback, provenance suppression,
+audit-chain restart durability, governance-state restoration, Cloudflare
+Access JWT verification (RS256 signature, issuer/audience/expiry, tampered/
+unknown-kid/wrong-aud rejection, role mapping incl. citizen and service-token
+principals — minted against a locally generated RSA key + fake JWKS, no
+network), event-hub wakeups, live-adapter graceful fallback, provenance suppression,
 confidence abstention + governed threshold, mode-ladder non-execution proofs,
 exact-restore rollback, auto-revert monitoring, RBAC denial, audit chain
 tamper-evidence, DLQ routing, privacy gate, prompt-injection + rate-limit

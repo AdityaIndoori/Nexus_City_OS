@@ -2,8 +2,8 @@
 Certificate / Compliance Engine tests (ADR-002).
 
 Covers: HMAC signature verification, single-byte tamper detection, audit-chain
-participation (including across a Store restart), signing-key isolation from
-the auth key, key rotation with retired-key verification, template rendering,
+participation (including across a Store restart), key rotation with
+retired-key verification, template rendering,
 and redaction (no operator identities, no key material anywhere).
 """
 from __future__ import annotations
@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from nexus import bootstrap
 from nexus.adapters import SeattleAdapter, default_timing_plan
 from nexus.audit import AuditTrail
-from nexus.auth import Authenticator
 from nexus.certs import CERT_ACTION, CertificateEngine
 from nexus.graph import CityGraph
 from nexus.models import (
@@ -172,14 +171,6 @@ class TestCertificateEngine(unittest.TestCase):
                     os.remove(path + suffix)
                 except OSError:
                     pass
-
-    def test_cert_key_distinct_from_auth_key(self):
-        Authenticator(self.store)
-        auth_key = self.store.get_kv("auth_signing_key")
-        cert_key = self.store.get_kv("cert_signing_key")
-        self.assertIsNotNone(auth_key)
-        self.assertIsNotNone(cert_key)
-        self.assertNotEqual(auth_key, cert_key)
 
     def test_env_override_key(self):
         os.environ["NEXUS_CERT_KEY"] = "ab" * 32
